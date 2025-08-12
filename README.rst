@@ -14,7 +14,7 @@ Mapchete Container Images
    :target: https://github.com/mapchete/container-images/blob/main/LICENSE
    :alt: MIT License
 
-This repository builds and publishes a Docker container image for `Mapchete <https://github.com/mapchete/mapchete>`_ and its related extensions.
+This repository builds and publishes a Docker container image for `mapchete <https://github.com/mapchete/mapchete>`_ and its related extensions.
 
 Available Image
 ---------------
@@ -23,7 +23,7 @@ The image is hosted on the GitHub Container Registry (ghcr.io).
 
 mapchete
 ~~~~~~~~
-The image is based on ``ghcr.io/osgeo/gdal:ubuntu-small-3.11.3`` (using Python ``3.12.3`` and GDAL ``3.11.3``) with the most recent versions of ``mapchete`` including the ``mapchete-eo`` extension and ``mapchete-hub``.
+The image is based on ``ghcr.io/osgeo/gdal:ubuntu-small-3.11.3`` (using Python ``3.12.3`` and GDAL ``3.11.3``) with the most recent versions of mapchete including the mapchete EO extension and mapchete Hub.
 
 .. code-block:: shell
 
