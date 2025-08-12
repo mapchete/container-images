@@ -13,8 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Delete old container image versions
-        # This line is the fix. It explicitly uses version 2.
-        uses: snok/container-retention-policy@v2.2.0
+        uses: snok/container-retention-policy@v2
         with:
             image-names: mapchete
             cut-off: One day ago UTC
@@ -22,4 +21,5 @@ jobs:
             org-name: mapchete
             keep-at-least: 5
             skip-tags: '^(latest|\d+\.\d+(\.\d+)?)$'
-            github-token: ${{ secrets.GITHUB_TOKEN }}
+            token: ${{ secrets.GITHUB_TOKEN }}
+            token-type: github-token
