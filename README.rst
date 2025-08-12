@@ -23,7 +23,7 @@ The image is hosted on the GitHub Container Registry (ghcr.io).
 
 mapchete
 ~~~~~~~~
-The base image with a recent version of Mapchete including the ``mapchete-eo`` and ``mapchete-hub`` extensions.
+The image is based on ``ghcr.io/osgeo/gdal:ubuntu-small-3.11.3`` (using Python ``3.12.3`` and GDAL ``3.11.3``) with the most recent versions of ``mapchete`` including the ``mapchete-eo`` extension and ``mapchete-hub``.
 
 .. code-block:: shell
 
