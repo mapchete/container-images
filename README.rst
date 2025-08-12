@@ -2,6 +2,10 @@
 Mapchete Container Images
 ======================
 
+.. image:: https://img.shields.io/github/v/release/mapchete/container-images
+   :target: https://github.com/mapchete/container-images/releases
+   :alt: Latest Release
+
 .. image:: https://img.shields.io/github/actions/workflow/status/mapchete/container-images/build-image.yml
    :target: https://github.com/mapchete/container-images/actions/workflows/build-image.yml
    :alt: Build Status
