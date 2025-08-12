@@ -36,6 +36,6 @@ Automated Cleanup
 This repository uses an automated workflow to clean up old, untagged images. The following tags are always kept:
 
 * ``latest``
-* Version tags (e.g., ``1.2.3``)
+* Version tags (e.g., ``2025.8.0``)
 
 All other images (i.e., those tagged with a commit SHA) are subject to cleanup to keep the registry tidy.
