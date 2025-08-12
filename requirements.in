@@ -1,0 +1,21 @@
+aiohttp
+bokeh
+dask==2025.5.0
+dask-gateway==2025.4.0
+dask-gateway-server==2025.4.0
+dask-kubernetes==2025.4.3
+distributed==2025.5.0
+fastapi==0.115.12
+httpx
+jupyter-server-proxy
+kubernetes
+lz4
+mapchete @ git+https://github.com/mapchete/mapchete.git@2025.6.0
+mapchete-eo @ git+https://github.com/mapchete/mapchete-eo.git@2025.8.0
+mapchete-hub @ git+https://github.com/mapchete/mapchete-hub.git@2025.8.0
+prometheus-client
+pydantic>=2.0.0
+pymongo
+slack_sdk
+sqlalchemy
+uvicorn
