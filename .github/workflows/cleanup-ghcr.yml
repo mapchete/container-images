@@ -1,0 +1,31 @@
+# .github/workflows/cleanup-ghcr.yml
+name: Cleanup Container Registry
+
+on:
+  # Run this workflow automatically every Sunday at 02:00 UTC
+  schedule:
+    - cron: '0 2 * * 0'
+  # Allow running this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  cleanup-images:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old container image versions
+        # This line is the fix. It explicitly uses version 2.
+        uses: snok/container-retention-policy@v2
+        with:
+          # A comma-separated list of the container images you want to clean up.
+          package-names: 'mapchete'
+
+          # The token to authenticate against the GitHub API.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+          # === Define what to KEEP ===
+
+          # Keep images with tags that match a version number or 'latest'.
+          keep-tags-regex: '^(latest|\d+\.\d+(\.\d+)?)$'
+
+          # In addition to the tags above, also keep the 5 most recently pushed images.
+          keep-most-recent: 5
