@@ -22,4 +22,4 @@ jobs:
             org-name: mapchete
             keep-at-least: 5
             skip-tags: '^(latest|\d+\.\d+(\.\d+)?)$'
-            token: ${{ secrets.GITHUB_TOKEN }}
+            github-token: ${{ secrets.GITHUB_TOKEN }}
