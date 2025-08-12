@@ -2,7 +2,7 @@
 Mapchete Container Images
 ======================
 
-.. image:: https://github.com/mapchete/container-images/actions/workflows/build-image.yml/badge.svg
+.. image:: https://img.shields.io/github/actions/workflow/status/mapchete/container-images/build-image.yml
    :target: https://github.com/mapchete/container-images/actions/workflows/build-image.yml
    :alt: Build Status
 
