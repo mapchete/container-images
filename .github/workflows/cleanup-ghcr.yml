@@ -11,6 +11,8 @@ on:
 jobs:
   cleanup-images:
     runs-on: ubuntu-latest
+    permissions:
+      packages: write
     steps:
       - name: Delete old container image versions
         uses: snok/container-retention-policy@v2
