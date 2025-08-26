@@ -1,0 +1,27 @@
+# .github/workflows/cleanup-ghcr.yml
+name: Cleanup Container Registry
+
+on:
+  # Run this workflow automatically every Sunday at 02:00 UTC
+  schedule:
+    - cron: '0 2 * * 0'
+  # Allow running this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  cleanup-images:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Delete old container image versions
+        uses: snok/container-retention-policy@v2
+        with:
+            image-names: mapchete
+            cut-off: One day ago UTC
+            account-type: org
+            org-name: mapchete
+            keep-at-least: 5
+            skip-tags: '^(latest|\d+\.\d+(\.\d+)?)$'
+            token: ${{ secrets.GITHUB_TOKEN }}
+            token-type: github-token
