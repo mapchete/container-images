@@ -8,7 +8,7 @@ Changelog
 
 * version updates
 
-    * `mapchete-eo` to `2025.8.3`
+  * ``mapchete-eo`` to ``2025.8.3``
 
 
 ---------------------
@@ -17,12 +17,12 @@ Changelog
 
 * version updates
 
-    * `mapchete-eo` to `2025.8.2`
+  * ``mapchete-eo`` to ``2025.8.2``
 
 * packaging
 
-    * keep `uv` installed for further use
-    * make `/app` the working directory
+  * keep ``uv`` installed for further use
+  * make ``/app`` the working directory
 
 
 ---------------------
