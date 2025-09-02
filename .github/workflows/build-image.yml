@@ -4,8 +4,8 @@ on:
   push:
     branches:
       - 'main'        # Run only on pushes to the main branch
-    tags:
-      - '*.*.*'      # Run on version tags like v1.2.3
+    # tags:
+    #   - '*.*.*'      # Run on version tags like v1.2.3
 
 env:
   REGISTRY: ghcr.io
