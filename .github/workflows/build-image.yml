@@ -23,6 +23,10 @@ jobs:
       attestations: write
       id-token: write
 
+    strategy:
+      matrix:
+        image-name: [mapchete, mhub-cli-light, mhub-cli-full]
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -45,11 +49,11 @@ jobs:
             type=ref,event=branch
             type=ref,event=pr
 
-      - name: Build and push mapchete image
-        id: push-mapchete
+      - name: Build and push ${{ matrix.image-name }} image
+        id: push
         uses: docker/build-push-action@v5
         with:
-          context: mapchete/
+          context: ${{ matrix.image-name }}/
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -57,35 +61,5 @@ jobs:
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME}}
-          subject-digest: ${{ steps.push-mapchete.outputs.digest }}
-          push-to-registry: true
-
-      - name: Build and push mhub-cli-light image
-        id: push-mhub-cli-light
-        uses: docker/build-push-action@v5
-        with:
-          context: mhub-cli-light/
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-      - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME}}
-          subject-digest: ${{ steps.push-mhub-cli-light.outputs.digest }}
-          push-to-registry: true
-
-      - name: Build and push mhub-cli-full image
-        id: push-mhub-cli-full
-        uses: docker/build-push-action@v5
-        with:
-          context: mapchete/
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-      - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME}}
-          subject-digest: ${{ steps.push-mhub-cli-full.outputs.digest }}
+          subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
