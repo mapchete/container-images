@@ -41,11 +41,11 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=branch
             type=ref,event=pr
-      - name: Build and push Docker image
+      - name: Build and push mapchete image
         id: push
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: mapchete/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
