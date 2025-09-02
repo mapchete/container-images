@@ -7,8 +7,8 @@ on:
   pull_request:
     branches:
       - 'main'
-  # tags:
-    #   - '*.*.*'      # Run on version tags like v1.2.3
+  tags:
+      - '*.*.*'      # Run on version tags like 1.2.3
 
 env:
   REGISTRY: ghcr.io
