@@ -13,11 +13,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       packages: write
+    strategy:
+      matrix:
+        image-name: [mapchete, mhub-cli-light, mhub-cli-full]
     steps:
       - name: Delete old container image versions
         uses: snok/container-retention-policy@v2
         with:
-            image-names: mapchete, mhub-cli-light, mhub-cli-full
+            image-names: ${{ matrix.image-name }}
             cut-off: One day ago UTC
             account-type: org
             org-name: mapchete
