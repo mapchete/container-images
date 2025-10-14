@@ -10,8 +10,8 @@ httpx
 jupyter-server-proxy
 kubernetes
 lz4
-mapchete @ git+https://github.com/mapchete/mapchete.git@2025.9.1
-mapchete-eo @ git+https://github.com/mapchete/mapchete-eo.git@2025.8.3
+mapchete @ git+https://github.com/mapchete/mapchete.git@2025.10.1
+mapchete-eo @ git+https://github.com/mapchete/mapchete-eo.git@2025.10.1
 mapchete-hub @ git+https://github.com/mapchete/mapchete-hub.git@2025.8.0
 prometheus-client
 pydantic>=2.0.0

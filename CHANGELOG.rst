@@ -2,13 +2,23 @@
 Changelog
 #########
 
+----------------------
+2025.10.0 - 2025-10-14
+----------------------
+
+* images
+
+  * `mapchete`: updated `mapchete` to `2025.10.1`
+  * `mapchete`: updated `mapchete-eo` to `2025.10.1`
+
+
 ---------------------
 2025.9.2 - 2025-09-26
 ---------------------
 
 * images
 
-  * `mapchete`: updated mapchete to `2025.9.1`
+  * `mapchete`: updated `mapchete` to `2025.9.1`
 
 * CI
 
