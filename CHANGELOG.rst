@@ -3,6 +3,24 @@ Changelog
 #########
 
 ----------------------
+2025.11.0 - 2025-11-20
+----------------------
+
+* images
+
+  * `mapchete`
+
+    * base image to `ubuntu-small-3.12.0`
+    * `mapchete` to `2025.11.0`
+    * `mapchete-eo` to `2025.11.0`
+    * `mapchete-hub` to `2025.11.0`
+    * `dask` to `2025.11.0`
+    * `dask-kubernetes` to `2025.7.0`
+    * `distributed` to `2025.11.0`
+    * `fastapi` to `0.121.3`
+
+
+----------------------
 2025.10.0 - 2025-10-14
 ----------------------
 
