@@ -1,4 +1,4 @@
-FROM ghcr.io/osgeo/gdal:ubuntu-small-3.11.3 AS builder
+FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0 AS builder
 
 ENV WORKDIR="/app"
 ENV GML_SKIP_CORRUPTED_FEATURES=YES
@@ -26,7 +26,7 @@ RUN uv pip compile requirements.in -o requirements.txt \
     && uv pip sync requirements.txt \
     && rm requirements.*
 
-FROM ghcr.io/osgeo/gdal:ubuntu-small-3.11.3 AS runner
+FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0 AS runner
 
 ENV WORKDIR="/app"
 ENV UV_COMPILE_BYTECODE=1
