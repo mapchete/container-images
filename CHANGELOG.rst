@@ -10,7 +10,7 @@ Changelog
 
   * `mapchete`
 
-    * `mapchete-eo` to `2025.11.0`
+    * `mapchete-eo` to `2026.1.0`
 
 
 ----------------------
