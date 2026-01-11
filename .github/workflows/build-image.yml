@@ -96,7 +96,7 @@ jobs:
         if: steps.filter.outputs.run == 'true' && matrix.image-name == 'mapchete' && success()
         uses: peter-evans/repository-dispatch@v3
         with:
-          token: ${{ secrets.MAPCHETE_PAT_CONTAINER_IMAGES_TOKEN }}
+          token: ${{ secrets.MAPCHETE_PAT_CONTAINER_IMAGES_TOKEN || secrets.GITHUB_TOKEN }}
           repository: mapchete/container-images
           event-type: run_integration_tests
           client-payload: |
