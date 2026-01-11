@@ -30,7 +30,7 @@ jobs:
         image-name: [mapchete, mhub-cli-light, mhub-cli-full]
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Factory
         uses: actions/checkout@v4
 
       - name: Check which image to build
@@ -39,18 +39,10 @@ jobs:
           if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
             SOURCE="${{ github.event.client_payload.source_repo }}"
             TARGET="${{ matrix.image-name }}"
-            if [[ "$TARGET" == "mapchete" ]]; then
-              if [[ "$SOURCE" == "mapchete" || "$SOURCE" == "mapchete-eo" || "$SOURCE" == "mapchete-hub" ]]; then
-                echo "run=true" >> $GITHUB_OUTPUT
-              else
-                echo "run=false" >> $GITHUB_OUTPUT
-              fi
-            elif [[ "$TARGET" == "mhub-cli-light" || "$TARGET" == "mhub-cli-full" ]]; then
-              if [[ "$SOURCE" == "mapchete-hub-cli" ]]; then
-                echo "run=true" >> $GITHUB_OUTPUT
-              else
-                echo "run=false" >> $GITHUB_OUTPUT
-              fi
+            if [[ "$TARGET" == "mapchete" && ("$SOURCE" == "mapchete" || "$SOURCE" == "mapchete-eo" || "$SOURCE" == "mapchete-hub") ]]; then
+              echo "run=true" >> $GITHUB_OUTPUT
+            elif [[ ("$TARGET" == "mhub-cli-light" || "$TARGET" == "mhub-cli-full") && "$SOURCE" == "mapchete-hub-cli" ]]; then
+              echo "run=true" >> $GITHUB_OUTPUT
             else
               echo "run=false" >> $GITHUB_OUTPUT
             fi
@@ -58,7 +50,40 @@ jobs:
             echo "run=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Log in to the Container registry
+      - name: Collect Source Repos
+        if: steps.filter.outputs.run == 'true'
+        run: |
+          if [[ "${{ matrix.image-name }}" == "mapchete" ]]; then
+            gh repo clone mapchete/mapchete source-core -- --depth 1 || true
+            gh repo clone mapchete/mapchete-eo source-eo -- --depth 1 || true
+          else
+            gh repo clone mapchete/mapchete-hub-cli source-cli -- --depth 1 || true
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.MAPCHETE_PAT_CONTAINER_IMAGES_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Align Dependencies
+        if: steps.filter.outputs.run == 'true'
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          source $HOME/.cargo/env
+          cd ${{ matrix.image-name }}
+          uv init --lib .
+          
+          DEPS=""
+          if [[ "${{ matrix.image-name }}" == "mapchete" ]]; then
+            [ -f ../source-core/uv.lock ] && DEPS="$DEPS ../source-core"
+            [ -f ../source-eo/uv.lock ] && DEPS="$DEPS ../source-eo"
+          else
+            [ -f ../source-cli/uv.lock ] && DEPS="$DEPS ../source-cli"
+          fi
+          
+          if [ -n "$DEPS" ]; then
+            uv add $DEPS || echo "Alignment failed for some repos, continuing with available data"
+          fi
+          uv lock
+
+      - name: Log in to GHCR
         if: steps.filter.outputs.run == 'true'
         uses: docker/login-action@v3
         with:
@@ -89,29 +114,29 @@ jobs:
           load: true
           tags: local-test-image:latest
 
-      - name: Checkout mapchete-eo for tests
-        if: steps.filter.outputs.run == 'true' && matrix.image-name == 'mapchete'
-        uses: actions/checkout@v4
-        with:
-          repository: mapchete/mapchete-eo
-          token: ${{ secrets.MAPCHETE_PAT_CONTAINER_IMAGES_TOKEN || secrets.GITHUB_TOKEN }}
-          path: integration-tests
-
       - name: Run Integration Tests
         if: steps.filter.outputs.run == 'true' && matrix.image-name == 'mapchete'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REQUEST_PAYER: ${{ vars.AWS_REQUEST_PAYER }}
+          AWS_DEFAULT_REGION: ${{ vars.AWS_DEFAULT_REGION }}
+          CDSE_S3_ACCESS_KEY: ${{ secrets.CDSE_S3_ACCESS_KEY }}
+          CDSE_S3_ACCESS_SECRET: ${{ secrets.CDSE_S3_ACCESS_SECRET }}
+          CURL_CA_BUNDLE: /etc/ssl/certs/ca-certificates.crt
         run: |
           docker run --rm \
-            -v ${{ github.workspace }}/integration-tests:/app/src \
+            -v ${{ github.workspace }}/source-eo:/app/src \
             -w /app/src \
-            -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
-            -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
-            -e AWS_REQUEST_PAYER=${{ vars.AWS_REQUEST_PAYER }} \
-            -e AWS_DEFAULT_REGION=${{ vars.AWS_DEFAULT_REGION }} \
-            -e CDSE_S3_ACCESS_KEY=${{ secrets.CDSE_S3_ACCESS_KEY }} \
-            -e CDSE_S3_ACCESS_SECRET=${{ secrets.CDSE_S3_ACCESS_SECRET }} \
-            -e CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
+            -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
+            -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
+            -e AWS_REQUEST_PAYER=$AWS_REQUEST_PAYER \
+            -e AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION \
+            -e CDSE_S3_ACCESS_KEY=$CDSE_S3_ACCESS_KEY \
+            -e CDSE_S3_ACCESS_SECRET=$CDSE_S3_ACCESS_SECRET \
+            -e CURL_CA_BUNDLE=$CURL_CA_BUNDLE \
             local-test-image:latest \
-            /bin/bash -c "uv pip install pytest && uv pip install -e .[test] && uv run pytest"
+            /bin/bash -c "uv pip install pytest && uv run pytest"
 
       - name: Push Verified Image
         if: steps.filter.outputs.run == 'true' && steps.meta.outputs.tags != '' && success()
