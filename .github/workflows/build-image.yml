@@ -2,7 +2,7 @@ name: docker build
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
     tags: ['[0-9][0-9][0-9][0-9].*']
   pull_request:
     branches: [main]
@@ -35,7 +35,6 @@ jobs:
           if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
             SOURCE="${{ github.event.client_payload.source_repo }}"
             TARGET="${{ matrix.image-name }}"
-            
             if [[ "$TARGET" == "mapchete" ]]; then
               if [[ "$SOURCE" == "mapchete" || "$SOURCE" == "mapchete-eo" || "$SOURCE" == "mapchete-hub" ]]; then
                 echo "run=true" >> $GITHUB_OUTPUT
@@ -73,10 +72,9 @@ jobs:
             type=raw,value=${{ github.event.client_payload.image_tag }},enable=${{ github.event_name == 'repository_dispatch' }}
             type=ref,event=tag,enable=${{ github.event_name != 'repository_dispatch' }}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && github.event_name != 'repository_dispatch' }}
-            type=ref,event=branch
-            type=ref,event=pr
+            type=raw,value=dev,enable=${{ github.ref != 'refs/heads/main' && github.event_name != 'repository_dispatch' && github.event_name != 'pull_request' }}
 
-      - name: Build and push ${{ matrix.image-name }} image
+      - name: Build and Push Image
         if: steps.filter.outputs.run == 'true'
         id: push
         uses: docker/build-push-action@v5
@@ -86,10 +84,15 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      - name: Generate artifact attestation
-        if: steps.filter.outputs.run == 'true'
-        uses: actions/attest-build-provenance@v2
+      - name: Dispatch Integration Tests
+        # We only test the core 'mapchete' image
+        if: steps.filter.outputs.run == 'true' && matrix.image-name == 'mapchete' && success()
+        uses: peter-evans/repository-dispatch@v3
         with:
-          subject-name: ${{ env.REGISTRY }}/mapchete/${{ matrix.image-name}}
-          subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true
+          token: ${{ secrets.MAPCHETE_PAT_CONTAINER_IMAGES_TOKEN }}
+          repository: mapchete/container-images
+          event-type: run_integration_tests
+          client-payload: |
+            {
+              "image_tag": "${{ steps.meta.outputs.version }}"
+            }
