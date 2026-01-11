@@ -144,7 +144,7 @@ jobs:
             -e CDSE_S3_ACCESS_SECRET=$CDSE_S3_ACCESS_SECRET \
             -e CURL_CA_BUNDLE=$CURL_CA_BUNDLE \
             local-test-image:latest \
-            /bin/bash -c "uv pip install pytest && uv pip install -e .[test] && uv run --active pytest"
+            /bin/bash -c "pip install -e .[test] && uv run pytest"
 
       - name: Push Verified Image
         if: steps.filter.outputs.run == 'true' && steps.meta.outputs.tags != '' && success()
