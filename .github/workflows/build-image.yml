@@ -13,7 +13,7 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
-  build-and-push-image:
+  build-and-test:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -71,19 +71,59 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            # 1. Version Tags (matches 2026.1.0 etc.)
             type=match,pattern=([0-9][0-9][0-9][0-9].*),group=1
-            # 2. Latest (Only on main branch)
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && github.event_name != 'repository_dispatch' }}
-            # 3. Dev (On any other branch, including auto-image-factory)
-            type=raw,value=dev,enable=${{ github.ref != 'refs/heads/main' && github.event_name != 'repository_dispatch' && github.event_name != 'pull_request' }}
-            # 4. Dispatch Tag (Uses what the source repo sent)
+            type=raw,value=dev,enable=${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') && github.event_name != 'repository_dispatch' }}
             type=raw,value=${{ github.event.client_payload.image_tag }},enable=${{ github.event_name == 'repository_dispatch' }}
-            # 5. Emergency Fallback (to prevent the "tag is needed" error)
-            type=raw,value=tmp-${{ github.sha }},enable=${{ github.event_name == 'pull_request' }}
+            type=ref,event=pr
 
-      - name: Build and Push Image
+      # STEP 1: Build local image (NOT pushing yet)
+      - name: Build Local Image for Testing
         if: steps.filter.outputs.run == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.image-name }}/
+          push: false
+          load: true
+          tags: local-test-image:latest
+
+      # STEP 2: Checkout mapchete-eo for tests
+      - name: Checkout mapchete-eo (Test Source)
+        if: steps.filter.outputs.run == 'true' && matrix.image-name == 'mapchete'
+        uses: actions/checkout@v4
+        with:
+          repository: mapchete/mapchete-eo
+          token: ${{ secrets.MAPCHETE_PAT_CONTAINER_IMAGES_TOKEN }}
+          path: integration-tests
+
+      # STEP 3: Run Tests
+      - name: Run Integration Tests
+        if: steps.filter.outputs.run == 'true' && matrix.image-name == 'mapchete'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REQUEST_PAYER: ${{ vars.AWS_REQUEST_PAYER }}
+          AWS_DEFAULT_REGION: ${{ vars.AWS_DEFAULT_REGION }}
+          CDSE_S3_ACCESS_KEY: ${{ secrets.CDSE_S3_ACCESS_KEY }}
+          CDSE_S3_ACCESS_SECRET: ${{ secrets.CDSE_S3_ACCESS_SECRET }}
+          CURL_CA_BUNDLE: /etc/ssl/certs/ca-certificates.crt
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}/integration-tests:/app \
+            -w /app \
+            -e VIRTUAL_ENV=/app/.venv \
+            -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
+            -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
+            -e AWS_REQUEST_PAYER=$AWS_REQUEST_PAYER \
+            -e AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION \
+            -e CDSE_S3_ACCESS_KEY=$CDSE_S3_ACCESS_KEY \
+            -e CDSE_S3_ACCESS_SECRET=$CDSE_S3_ACCESS_SECRET \
+            -e CURL_CA_BUNDLE=$CURL_CA_BUNDLE \
+            local-test-image:latest \
+            /bin/bash -c "uv pip install pytest && uv pip install -e . && pytest"
+
+      - name: Build and Push Verified Image
+        if: steps.filter.outputs.run == 'true' && success()
         id: push
         uses: docker/build-push-action@v5
         with:
@@ -92,14 +132,10 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      - name: Dispatch Integration Tests
-        if: steps.filter.outputs.run == 'true' && matrix.image-name == 'mapchete' && success()
-        uses: peter-evans/repository-dispatch@v3
+      - name: Generate artifact attestation
+        if: steps.filter.outputs.run == 'true' && success()
+        uses: actions/attest-build-provenance@v2
         with:
-          token: ${{ secrets.MAPCHETE_PAT_CONTAINER_IMAGES_TOKEN || secrets.GITHUB_TOKEN }}
-          repository: mapchete/container-images
-          event-type: run_integration_tests
-          client-payload: |
-            {
-              "image_tag": "${{ steps.meta.outputs.version }}"
-            }
+          subject-name: ${{ env.REGISTRY }}/mapchete/${{ matrix.image-name}}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
