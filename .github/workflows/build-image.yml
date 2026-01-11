@@ -69,7 +69,7 @@ jobs:
           curl -LsSf https://astral.sh/uv/install.sh | sh
           source $HOME/.cargo/env
           cd ${{ matrix.image-name }}
-          uv init --lib .
+          uv init --name factory-build --lib .
           
           DEPS=""
           if [[ "${{ matrix.image-name }}" == "mapchete" ]]; then
@@ -81,7 +81,7 @@ jobs:
           fi
           
           if [ -n "$DEPS" ]; then
-            uv add $DEPS || echo "Alignment failed for some repos, continuing with available data"
+            uv add $DEPS || echo "Alignment failed for some repos, continuing"
           fi
           uv lock
 
