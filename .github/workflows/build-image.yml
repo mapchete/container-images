@@ -71,14 +71,19 @@ jobs:
           flavor: |
             latest=false
           tags: |
+            # 1. Version Tags (matches 2026.1.0 etc.)
             type=match,pattern=([0-9][0-9][0-9][0-9].*),group=1
+            
+            # 2. Latest (Only on main branch)
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && github.event_name != 'repository_dispatch' }}
-            type=raw,value=dev,enable=${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') && github.event_name != 'repository_dispatch' }}
+            
+            # 3. Dev (On any other branch, NOT on PRs, NOT on Dispatch)
+            type=raw,value=dev,enable=${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') && github.event_name == 'push' }}
+            
+            # 4. Dispatch Tag (Uses exactly what the source repo sent)
             type=raw,value=${{ github.event.client_payload.image_tag }},enable=${{ github.event_name == 'repository_dispatch' }}
-            type=ref,event=pr
 
-      # STEP 1: Build local image (NOT pushing yet)
-      - name: Build Local Image for Testing
+      - name: Build Local Image
         if: steps.filter.outputs.run == 'true'
         uses: docker/build-push-action@v5
         with:
@@ -87,8 +92,7 @@ jobs:
           load: true
           tags: local-test-image:latest
 
-      # STEP 2: Checkout mapchete-eo for tests
-      - name: Checkout mapchete-eo (Test Source)
+      - name: Checkout mapchete-eo
         if: steps.filter.outputs.run == 'true' && matrix.image-name == 'mapchete'
         uses: actions/checkout@v4
         with:
@@ -96,7 +100,6 @@ jobs:
           token: ${{ secrets.MAPCHETE_PAT_CONTAINER_IMAGES_TOKEN }}
           path: integration-tests
 
-      # STEP 3: Run Tests
       - name: Run Integration Tests
         if: steps.filter.outputs.run == 'true' && matrix.image-name == 'mapchete'
         env:
@@ -122,7 +125,7 @@ jobs:
             local-test-image:latest \
             /bin/bash -c "uv pip install pytest && uv pip install -e . && pytest"
 
-      - name: Build and Push Verified Image
+      - name: Push Verified Image
         if: steps.filter.outputs.run == 'true' && success()
         id: push
         uses: docker/build-push-action@v5
