@@ -111,7 +111,7 @@ jobs:
             -e CDSE_S3_ACCESS_SECRET=${{ secrets.CDSE_S3_ACCESS_SECRET }} \
             -e CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
             local-test-image:latest \
-            /bin/bash -c "uv pip install pytest && uv pip install -e . && uv run pytest"
+            /bin/bash -c "uv pip install pytest && uv pip install -e .[test] && uv run pytest"
 
       - name: Push Verified Image
         if: steps.filter.outputs.run == 'true' && steps.meta.outputs.tags != '' && success()
