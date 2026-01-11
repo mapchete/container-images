@@ -75,6 +75,7 @@ jobs:
           if [[ "${{ matrix.image-name }}" == "mapchete" ]]; then
             [ -f ../source-core/uv.lock ] && DEPS="$DEPS ../source-core"
             [ -f ../source-eo/uv.lock ] && DEPS="$DEPS ../source-eo"
+            [ -f ../source-hub/uv.lock ] && DEPS="$DEPS ../source-hub"
           else
             [ -f ../source-cli/uv.lock ] && DEPS="$DEPS ../source-cli"
           fi
