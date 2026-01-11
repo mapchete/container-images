@@ -68,18 +68,19 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/mapchete/${{ matrix.image-name }}
-          # Disabling default flavor prevents the creation of automatic SHA/branch tags
           flavor: |
             latest=false
           tags: |
             # 1. Version Tags (matches 2026.1.0 etc.)
             type=match,pattern=([0-9][0-9][0-9][0-9].*),group=1
-            # 2. Latest (Only on main branch pushes, NOT dispatch)
+            # 2. Latest (Only on main branch)
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && github.event_name != 'repository_dispatch' }}
-            # 3. Dev (On any non-main branch, NOT dispatch)
+            # 3. Dev (On any other branch, including auto-image-factory)
             type=raw,value=dev,enable=${{ github.ref != 'refs/heads/main' && github.event_name != 'repository_dispatch' && github.event_name != 'pull_request' }}
             # 4. Dispatch Tag (Uses what the source repo sent)
             type=raw,value=${{ github.event.client_payload.image_tag }},enable=${{ github.event_name == 'repository_dispatch' }}
+            # 5. Emergency Fallback (to prevent the "tag is needed" error)
+            type=raw,value=tmp-${{ github.sha }},enable=${{ github.event_name == 'pull_request' }}
 
       - name: Build and Push Image
         if: steps.filter.outputs.run == 'true'
