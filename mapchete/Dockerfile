@@ -1,25 +1,18 @@
 FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0 AS builder
 WORKDIR /app
-
-# Install uv and system tools
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 RUN apt-get update && apt install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 
-# Fix for hardlink/filesystem warnings
 ENV UV_LINK_MODE=copy
 ENV UV_COMPILE_BYTECODE=1
 
-# Copy the entire build context (which now includes source-core, source-eo, etc.)
 COPY . .
-
-# IMPORTANT: Remove --no-install-project so mapchete core is installed into the venv
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --no-editable
 
 FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0 AS runner
 ENV WORKDIR="/app"
 ENV PATH="${WORKDIR}/.venv/bin:${PATH}"
 ENV UV_LINK_MODE=copy
-
 WORKDIR ${WORKDIR}
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/

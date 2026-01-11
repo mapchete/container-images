@@ -124,27 +124,19 @@ jobs:
 
       - name: Run Integration Tests
         if: steps.filter.outputs.run == 'true' && matrix.image-name == 'mapchete'
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REQUEST_PAYER: ${{ vars.AWS_REQUEST_PAYER }}
-          AWS_DEFAULT_REGION: ${{ vars.AWS_DEFAULT_REGION }}
-          CDSE_S3_ACCESS_KEY: ${{ secrets.CDSE_S3_ACCESS_KEY }}
-          CDSE_S3_ACCESS_SECRET: ${{ secrets.CDSE_S3_ACCESS_SECRET }}
-          CURL_CA_BUNDLE: /etc/ssl/certs/ca-certificates.crt
         run: |
           docker run --rm \
-            -v ${{ github.workspace }}/mapchete/source-eo:/app/src \
-            -w /app/src \
-            -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
-            -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
-            -e AWS_REQUEST_PAYER=$AWS_REQUEST_PAYER \
-            -e AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION \
-            -e CDSE_S3_ACCESS_KEY=$CDSE_S3_ACCESS_KEY \
-            -e CDSE_S3_ACCESS_SECRET=$CDSE_S3_ACCESS_SECRET \
-            -e CURL_CA_BUNDLE=$CURL_CA_BUNDLE \
+            -v ${{ github.workspace }}/mapchete/source-eo:/app/tests-run \
+            -w /app/tests-run \
+            -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
+            -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
+            -e AWS_REQUEST_PAYER=${{ vars.AWS_REQUEST_PAYER }} \
+            -e AWS_DEFAULT_REGION=${{ vars.AWS_DEFAULT_REGION }} \
+            -e CDSE_S3_ACCESS_KEY=${{ secrets.CDSE_S3_ACCESS_KEY }} \
+            -e CDSE_S3_ACCESS_SECRET=${{ secrets.CDSE_S3_ACCESS_SECRET }} \
+            -e CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
             local-test-image:latest \
-            /bin/bash -c "uv pip install -e .[test] && uv run pytest"
+            /bin/bash -c "uv pip install pytest && pytest"
 
       - name: Push Verified Image
         if: steps.filter.outputs.run == 'true' && steps.meta.outputs.tags != '' && success()
