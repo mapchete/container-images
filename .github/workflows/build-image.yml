@@ -101,8 +101,8 @@ jobs:
         if: steps.filter.outputs.run == 'true' && matrix.image-name == 'mapchete'
         run: |
           docker run --rm \
-            -v ${{ github.workspace }}/integration-tests:/app \
-            -w /app \
+            -v ${{ github.workspace }}/integration-tests:/app/src \
+            -w /app/src \
             -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
             -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
             -e AWS_REQUEST_PAYER=${{ vars.AWS_REQUEST_PAYER }} \
@@ -111,7 +111,7 @@ jobs:
             -e CDSE_S3_ACCESS_SECRET=${{ secrets.CDSE_S3_ACCESS_SECRET }} \
             -e CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
             local-test-image:latest \
-            /bin/bash -c "uv pip install --system pytest && uv pip install --system -e . && uv run --system pytest"
+            /bin/bash -c "uv pip install pytest && uv pip install -e . && uv run pytest"
 
       - name: Push Verified Image
         if: steps.filter.outputs.run == 'true' && steps.meta.outputs.tags != '' && success()
