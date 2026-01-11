@@ -71,13 +71,9 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            # 1. Version Tags
             type=match,pattern=([0-9][0-9][0-9][0-9].*),group=1
-            # 2. Latest (Main branch push only)
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
-            # 3. Dev (Any other branch push only)
             type=raw,value=dev,enable=${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') && github.event_name == 'push' }}
-            # 4. Dispatch Tag
             type=raw,value=${{ github.event.client_payload.image_tag }},enable=${{ github.event_name == 'repository_dispatch' }}
 
       - name: Build Local Image
@@ -94,7 +90,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: mapchete/mapchete-eo
-          token: ${{ secrets.MAPCHETE_PAT_CONTAINER_IMAGES_TOKEN }}
+          token: ${{ secrets.MAPCHETE_PAT_CONTAINER_IMAGES_TOKEN || secrets.GITHUB_TOKEN }}
           path: integration-tests
 
       - name: Run Integration Tests
@@ -123,8 +119,6 @@ jobs:
             /bin/bash -c "uv pip install pytest && uv pip install -e . && pytest"
 
       - name: Push Verified Image
-        # ONLY push if we are on main, dev branch push, or dispatch
-        # AND if we actually have tags to push
         if: steps.filter.outputs.run == 'true' && steps.meta.outputs.tags != '' && success()
         id: push
         uses: docker/build-push-action@v5
@@ -135,7 +129,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       - name: Generate artifact attestation
-        if: steps.push.outputs.digest != '' && success()
+        if: steps.filter.outputs.run == 'true' && steps.push.outputs.digest != '' && success()
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.REGISTRY }}/mapchete/${{ matrix.image-name}}
