@@ -2,13 +2,12 @@ name: docker build
 
 on:
   push:
-    branches:
-      - 'main'        # Run only on pushes to the main branch
-    tags:
-        - '*.*.*'      # Run on version tags like 1.2.3
+    branches: [main]
+    tags: ['[0-9][0-9][0-9][0-9].*']
   pull_request:
-    branches:
-      - 'main'
+    branches: [main]
+  repository_dispatch:
+    types: [source_update]
 
 env:
   REGISTRY: ghcr.io
@@ -30,26 +29,55 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Check which image to build
+        id: filter
+        run: |
+          if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+            SOURCE="${{ github.event.client_payload.source_repo }}"
+            TARGET="${{ matrix.image-name }}"
+            
+            if [[ "$TARGET" == "mapchete" ]]; then
+              if [[ "$SOURCE" == "mapchete" || "$SOURCE" == "mapchete-eo" || "$SOURCE" == "mapchete-hub" ]]; then
+                echo "run=true" >> $GITHUB_OUTPUT
+              else
+                echo "run=false" >> $GITHUB_OUTPUT
+              fi
+            elif [[ "$TARGET" == "mhub-cli-light" || "$TARGET" == "mhub-cli-full" ]]; then
+              if [[ "$SOURCE" == "mapchete-hub-cli" ]]; then
+                echo "run=true" >> $GITHUB_OUTPUT
+              else
+                echo "run=false" >> $GITHUB_OUTPUT
+              fi
+            else
+              echo "run=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "run=true" >> $GITHUB_OUTPUT
+          fi
+
       - name: Log in to the Container registry
+        if: steps.filter.outputs.run == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels) for Docker
+      - name: Extract metadata
+        if: steps.filter.outputs.run == 'true'
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/mapchete/${{ matrix.image-name }}
           tags: |
-            type=semver,pattern={{version}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ github.event.client_payload.image_tag }},enable=${{ github.event_name == 'repository_dispatch' }}
+            type=ref,event=tag,enable=${{ github.event_name != 'repository_dispatch' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && github.event_name != 'repository_dispatch' }}
             type=ref,event=branch
             type=ref,event=pr
-            type=ref,event=tag
 
       - name: Build and push ${{ matrix.image-name }} image
+        if: steps.filter.outputs.run == 'true'
         id: push
         uses: docker/build-push-action@v5
         with:
@@ -57,7 +85,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
       - name: Generate artifact attestation
+        if: steps.filter.outputs.run == 'true'
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.REGISTRY }}/mapchete/${{ matrix.image-name}}
