@@ -70,16 +70,13 @@ jobs:
           source $HOME/.cargo/env
           cd ${{ matrix.image-name }}
           
-          # Initialize as a factory build to avoid name shadowing
           uv init --name factory-build --lib .
           
-          # Move local clones into the matrix directory (the build context)
           [ -d ../source-core ] && mv ../source-core ./source-core
           [ -d ../source-eo ] && mv ../source-eo ./source-eo
           [ -d ../source-hub ] && mv ../source-hub ./source-hub
           [ -d ../source-cli ] && mv ../source-cli ./source-cli
           
-          # Add local paths so uv resolves them as relative dependencies
           DEPS=""
           [ -d source-core ] && DEPS="$DEPS ./source-core"
           [ -d source-eo ] && DEPS="$DEPS ./source-eo"
@@ -112,6 +109,7 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
             type=raw,value=dev,enable=${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') && github.event_name == 'push' }}
             type=raw,value=${{ github.event.client_payload.image_tag }},enable=${{ github.event_name == 'repository_dispatch' }}
+            type=ref,event=pr
 
       - name: Build Local Image
         if: steps.filter.outputs.run == 'true'
