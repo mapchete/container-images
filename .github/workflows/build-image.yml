@@ -69,19 +69,26 @@ jobs:
           curl -LsSf https://astral.sh/uv/install.sh | sh
           source $HOME/.cargo/env
           cd ${{ matrix.image-name }}
+          
+          # 1. Initialize with a unique name
           uv init --name factory-build --lib .
           
+          # 2. Move source repos into the build context so they are relative
+          # This allows the Dockerfile to "see" them
+          [ -d ../source-core ] && mv ../source-core ./source-core
+          [ -d ../source-eo ] && mv ../source-eo ./source-eo
+          [ -d ../source-hub ] && mv ../source-hub ./source-hub
+          [ -d ../source-cli ] && mv ../source-cli ./source-cli
+          
+          # 3. Add them using relative paths
           DEPS=""
-          if [[ "${{ matrix.image-name }}" == "mapchete" ]]; then
-            [ -f ../source-core/uv.lock ] && DEPS="$DEPS ../source-core"
-            [ -f ../source-eo/uv.lock ] && DEPS="$DEPS ../source-eo"
-            [ -f ../source-hub/uv.lock ] && DEPS="$DEPS ../source-hub"
-          else
-            [ -f ../source-cli/uv.lock ] && DEPS="$DEPS ../source-cli"
-          fi
+          [ -d source-core ] && DEPS="$DEPS ./source-core"
+          [ -d source-eo ] && DEPS="$DEPS ./source-eo"
+          [ -d source-hub ] && DEPS="$DEPS ./source-hub"
+          [ -d source-cli ] && DEPS="$DEPS ./source-cli"
           
           if [ -n "$DEPS" ]; then
-            uv add $DEPS || echo "Alignment failed for some repos, continuing"
+            uv add $DEPS
           fi
           uv lock
 
@@ -128,7 +135,7 @@ jobs:
           CURL_CA_BUNDLE: /etc/ssl/certs/ca-certificates.crt
         run: |
           docker run --rm \
-            -v ${{ github.workspace }}/source-eo:/app/src \
+            -v ${{ github.workspace }}/mapchete/source-eo:/app/src \
             -w /app/src \
             -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
             -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
