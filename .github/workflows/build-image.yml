@@ -70,17 +70,15 @@ jobs:
           source $HOME/.cargo/env
           cd ${{ matrix.image-name }}
           
-          # 1. Initialize with a unique name
           uv init --name factory-build --lib .
           
-          # 2. Move source repos into the build context so they are relative
-          # This allows the Dockerfile to "see" them
+          # Move clones into context
           [ -d ../source-core ] && mv ../source-core ./source-core
           [ -d ../source-eo ] && mv ../source-eo ./source-eo
           [ -d ../source-hub ] && mv ../source-hub ./source-hub
           [ -d ../source-cli ] && mv ../source-cli ./source-cli
           
-          # 3. Add them using relative paths
+          # Add local paths so uv resolves everything together
           DEPS=""
           [ -d source-core ] && DEPS="$DEPS ./source-core"
           [ -d source-eo ] && DEPS="$DEPS ./source-eo"

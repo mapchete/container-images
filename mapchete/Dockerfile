@@ -6,11 +6,8 @@ RUN apt-get update && apt install -y --no-install-recommends git && rm -rf /var/
 ENV UV_LINK_MODE=copy
 ENV UV_COMPILE_BYTECODE=1
 
-# Copy everything (including the source-core, source-eo etc. folders)
 COPY . .
-
-# Now uv sync will find the files at the relative paths defined in uv.lock
-RUN uv sync --frozen --no-install-project --no-dev
+RUN uv sync --frozen --no-dev
 
 FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0 AS runner
 ENV WORKDIR="/app"
