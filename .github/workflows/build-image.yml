@@ -71,16 +71,13 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            # 1. Version Tags (matches 2026.1.0 etc.)
+            # 1. Version Tags
             type=match,pattern=([0-9][0-9][0-9][0-9].*),group=1
-            
-            # 2. Latest (Only on main branch)
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && github.event_name != 'repository_dispatch' }}
-            
-            # 3. Dev (On any other branch, NOT on PRs, NOT on Dispatch)
+            # 2. Latest (Main branch push only)
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+            # 3. Dev (Any other branch push only)
             type=raw,value=dev,enable=${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') && github.event_name == 'push' }}
-            
-            # 4. Dispatch Tag (Uses exactly what the source repo sent)
+            # 4. Dispatch Tag
             type=raw,value=${{ github.event.client_payload.image_tag }},enable=${{ github.event_name == 'repository_dispatch' }}
 
       - name: Build Local Image
@@ -92,7 +89,7 @@ jobs:
           load: true
           tags: local-test-image:latest
 
-      - name: Checkout mapchete-eo
+      - name: Checkout mapchete-eo for tests
         if: steps.filter.outputs.run == 'true' && matrix.image-name == 'mapchete'
         uses: actions/checkout@v4
         with:
@@ -126,7 +123,9 @@ jobs:
             /bin/bash -c "uv pip install pytest && uv pip install -e . && pytest"
 
       - name: Push Verified Image
-        if: steps.filter.outputs.run == 'true' && success()
+        # ONLY push if we are on main, dev branch push, or dispatch
+        # AND if we actually have tags to push
+        if: steps.filter.outputs.run == 'true' && steps.meta.outputs.tags != '' && success()
         id: push
         uses: docker/build-push-action@v5
         with:
@@ -136,7 +135,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       - name: Generate artifact attestation
-        if: steps.filter.outputs.run == 'true' && success()
+        if: steps.push.outputs.digest != '' && success()
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.REGISTRY }}/mapchete/${{ matrix.image-name}}
