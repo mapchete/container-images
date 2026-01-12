@@ -47,6 +47,7 @@ jobs:
       packages: write
       attestations: write
       id-token: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
 
@@ -113,6 +114,26 @@ jobs:
           subject-name: ghcr.io/mapchete/${{ inputs.image-name }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
+
+      - name: Update Version File
+        if: github.event_name == 'repository_dispatch' && github.event.client_payload.tag != ''
+        run: |
+          echo "${{ github.event.client_payload.source_repo }}: ${{ github.event.client_payload.tag }}" > ${{ inputs.image-name }}/VERSION.txt
+
+      - name: Create or Update Pull Request
+        if: github.event_name == 'repository_dispatch' && github.event.client_payload.tag != ''
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.MAPCHETE_PAT || secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update ${{ inputs.image-name }} to ${{ github.event.client_payload.tag }}"
+          branch: "bump-${{ inputs.image-name }}"
+          title: "🚀 Bump ${{ inputs.image-name }} version"
+          body: "Automated update triggered by `${{ github.event.client_payload.source_repo }}` version `${{ github.event.client_payload.tag }}`."
+          base: main
+          delete-branch: true
+          assignees: Scartography
+          reviewers: ungarj
+          labels: automated-pr
 
   cleanup-registry:
     needs: [prepare, build]
