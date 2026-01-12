@@ -28,10 +28,16 @@ jobs:
             elif [[ "$T" =~ ^mhub-cli-(light|full)$ && "$S" == "mapchete-hub-cli" ]]; then echo "run=true" >> $GITHUB_OUTPUT
             else echo "run=false" >> $GITHUB_OUTPUT; fi
           else echo "run=true" >> $GITHUB_OUTPUT; fi
+
   build:
     needs: prepare
     if: needs.prepare.outputs.run-build == 'true'
     runs-on: ubuntu-latest
+    env:
+      REPO_CORE: mapchete
+      REPO_EO: mapchete-eo
+      REPO_HUB: mapchete-hub
+      REPO_CLI: mapchete-hub-cli
     permissions:
       contents: write
       pull-requests: write
@@ -42,49 +48,57 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      
       - name: Collect Source
         run: |
           REF="${{ github.event.client_payload.sha || 'main' }}"
           SRC="${{ github.event.client_payload.source_repo }}"
           
           clone_repo() {
-            local repo=$1; local dest=$2
+            local repo=$1
             [[ "$SRC" == "$repo" ]] && BRANCH="$REF" || BRANCH="main"
             echo "Cloning $repo @ $BRANCH..."
-            gh repo clone "mapchete/$repo" "$dest" -- --depth 1 --branch "$BRANCH" || true
+            gh repo clone "mapchete/$repo" "$repo" -- --depth 1 --branch "$BRANCH" || true
           }
 
           if [[ "${{ inputs.image-name }}" == "mapchete" ]]; then
-            clone_repo "mapchete" "source-core"
-            clone_repo "mapchete-eo" "source-eo"
-            clone_repo "mapchete-hub" "source-hub"
+            clone_repo "${{ env.REPO_CORE }}"
+            clone_repo "${{ env.REPO_EO }}"
+            clone_repo "${{ env.REPO_HUB }}"
           else
-            clone_repo "mapchete-hub-cli" "source-cli"
+            clone_repo "${{ env.REPO_CLI }}"
           fi
         env:
           GH_TOKEN: ${{ secrets.MAPCHETE_PAT || secrets.GITHUB_TOKEN }}
+
       - name: Align Dependencies
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           source $HOME/.cargo/env
           cd ${{ inputs.image-name }}
           uv init --name factory-build --lib .
-          [ -d ../source-core ] && mv ../source-core ./source-core
-          [ -d ../source-eo ] && mv ../source-eo ./source-eo
-          [ -d ../source-hub ] && mv ../source-hub ./source-hub
-          [ -d ../source-cli ] && mv ../source-cli ./source-cli
+          
+          # Move repos into the build context
+          for REPO in ${{ env.REPO_CORE }} ${{ env.REPO_EO }} ${{ env.REPO_HUB }} ${{ env.REPO_CLI }}; do
+            [ -d "../$REPO" ] && mv "../$REPO" "./$REPO" || true
+          done
+
+          # Add internal dependencies
           DEPS=""
-          [ -d source-core ] && DEPS="$DEPS ./source-core"
-          [ -d source-eo ] && DEPS="$DEPS ./source-eo"
-          [ -d source-hub ] && DEPS="$DEPS ./source-hub"
-          [ -d source-cli ] && DEPS="$DEPS ./source-cli"
+          [ -d "${{ env.REPO_CORE }}" ] && DEPS="$DEPS ./${{ env.REPO_CORE }}"
+          [ -d "${{ env.REPO_EO }}" ] && DEPS="$DEPS ./${{ env.REPO_EO }}"
+          [ -d "${{ env.REPO_HUB }}" ] && DEPS="$DEPS ./${{ env.REPO_HUB }}"
+          [ -d "${{ env.REPO_CLI }}" ] && DEPS="$DEPS ./${{ env.REPO_CLI }}"
+          
           if [ -n "$DEPS" ]; then uv add $DEPS; fi
           uv lock
+
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
       - id: meta
         uses: docker/metadata-action@v5
         with:
@@ -97,22 +111,25 @@ jobs:
             type=raw,value=dev,enable=${{ (github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/')) || github.event_name == 'pull_request' || github.event_name == 'repository_dispatch' }}
             type=raw,value=${{ github.event.client_payload.image_tag }},enable=${{ github.event_name == 'repository_dispatch' }}
             type=ref,event=pr
+
       - uses: docker/build-push-action@v5
         with:
           context: ${{ inputs.image-name }}/
           push: false
           load: true
           tags: local-test-image:latest
+
       - name: Integration Tests
         if: inputs.image-name == 'mapchete'
         run: |
           docker run --rm \
-            -v ${{ github.workspace }}/mapchete/source-eo:/app/tests-run \
+            -v ${{ github.workspace }}/mapchete/${{ env.REPO_EO }}:/app/tests-run \
             -w /app/tests-run \
             -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
             -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
             local-test-image:latest \
             /bin/bash -c "uv pip install -e .[test] && uv run pytest"
+
       - id: push
         uses: docker/build-push-action@v5
         with:
@@ -122,12 +139,14 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false
           sbom: false
+
       - uses: actions/attest-build-provenance@v2
         if: steps.push.outputs.digest != ''
         with:
           subject-name: ghcr.io/mapchete/${{ inputs.image-name }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
+
       - name: Update Release PR
         if: github.event_name == 'repository_dispatch' && inputs.image-name == 'mapchete' && github.event.client_payload.image_tag != ''
         env:
@@ -146,7 +165,8 @@ jobs:
             git add uv.lock && git commit -m "release: update ${NEXT_VER}" && git push origin "$BRANCH_NAME"
             gh pr create --title "Release ${NEXT_VER}" --body "Automated release candidate." --base main --head "$BRANCH_NAME" || echo "PR exists"
           fi
-  registry-cleanup:
+
+  cleanup-registry:
     needs: [prepare, build]
     if: always() && needs.prepare.outputs.run-build == 'true'
     runs-on: ubuntu-latest
