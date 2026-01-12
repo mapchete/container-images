@@ -1,33 +1,19 @@
-FROM ghcr.io/snakepacker/python/3.13 AS builder
-
-ENV WORKDIR="/home"
-ENV PATH="${WORKDIR}/.venv/bin:${PATH}"
-WORKDIR ${WORKDIR}
-
-# install uv
+FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0 AS builder
+WORKDIR /app
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+RUN apt-get update && apt install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 
-# install system requirements and create virtual environment
-RUN apt update \
-    && apt install -y --no-install-recommends \
-        git \
-    && rm -rf /var/lib/apt/lists/*
-RUN uv venv --no-managed-python ${WORKDIR}/.venv
+ENV UV_LINK_MODE=copy
+ENV UV_COMPILE_BYTECODE=1
 
-# install python requirements into virtual environment
-COPY requirements.in .
-RUN uv pip compile requirements.in -o requirements.txt \
-    && uv pip sync requirements.txt \
-    && rm requirements.*
+COPY . .
+RUN uv sync --frozen --no-dev --no-editable
 
-
-FROM ghcr.io/snakepacker/python/3.13 AS runner
-
-ENV WORKDIR="/home"
+FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0 AS runner
+ENV WORKDIR="/app"
 ENV PATH="${WORKDIR}/.venv/bin:${PATH}"
+ENV UV_LINK_MODE=copy
 WORKDIR ${WORKDIR}
 
-# copy venv from builder
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 COPY --from=builder "${WORKDIR}/.venv" "${WORKDIR}/.venv"
-
-ENTRYPOINT [ "mhub" ]
