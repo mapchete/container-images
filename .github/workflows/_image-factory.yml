@@ -44,12 +44,22 @@ jobs:
           fetch-depth: 0
       - name: Collect Source
         run: |
+          REF="${{ github.event.client_payload.sha || 'main' }}"
+          SRC="${{ github.event.client_payload.source_repo }}"
+          
+          clone_repo() {
+            local repo=$1; local dest=$2
+            [[ "$SRC" == "$repo" ]] && BRANCH="$REF" || BRANCH="main"
+            echo "Cloning $repo @ $BRANCH..."
+            gh repo clone "mapchete/$repo" "$dest" -- --depth 1 --branch "$BRANCH" || true
+          }
+
           if [[ "${{ inputs.image-name }}" == "mapchete" ]]; then
-            gh repo clone mapchete/mapchete source-core -- --depth 1 || true
-            gh repo clone mapchete/mapchete-eo source-eo -- --depth 1 || true
-            gh repo clone mapchete/mapchete-hub source-hub -- --depth 1 || true
+            clone_repo "mapchete" "source-core"
+            clone_repo "mapchete-eo" "source-eo"
+            clone_repo "mapchete-hub" "source-hub"
           else
-            gh repo clone mapchete/mapchete-hub-cli source-cli -- --depth 1 || true
+            clone_repo "mapchete-hub-cli" "source-cli"
           fi
         env:
           GH_TOKEN: ${{ secrets.MAPCHETE_PAT || secrets.GITHUB_TOKEN }}
