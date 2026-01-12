@@ -63,15 +63,17 @@ jobs:
           source $HOME/.cargo/env
           cd ${{ inputs.image-name }}
           uv init --name factory-build --lib .
+          mkdir -p deps
           for REPO in ${{ env.REPO_CORE }} ${{ env.REPO_EO }} ${{ env.REPO_HUB }} ${{ env.REPO_CLI }}; do
             if [ -d "../$REPO" ]; then
-              mv "../$REPO" "./$REPO"
+              mv "../$REPO" "./deps/$REPO"
             fi
           done
           DEPS=""
           for REPO in ${{ env.REPO_CORE }} ${{ env.REPO_EO }} ${{ env.REPO_HUB }} ${{ env.REPO_CLI }}; do
-            if [ -d "$REPO" ] && ([ -f "$REPO/pyproject.toml" ] || [ -f "$REPO/setup.py" ]); then
-              DEPS="$DEPS ./$REPO"
+            TARGET="./deps/$REPO"
+            if [ -d "$TARGET" ] && ([ -f "$TARGET/pyproject.toml" ] || [ -f "$TARGET/setup.py" ]); then
+              DEPS="$DEPS $TARGET"
             fi
           done
           if [ -n "$DEPS" ]; then 
@@ -101,7 +103,7 @@ jobs:
         if: inputs.image-name == 'mapchete'
         run: |
           docker run --rm \
-            -v ${{ github.workspace }}/mapchete/${{ env.REPO_EO }}:/app/tests-run \
+            -v ${{ github.workspace }}/mapchete/deps/${{ env.REPO_EO }}:/app/tests-run \
             -w /app/tests-run \
             -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
             -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
