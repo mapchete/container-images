@@ -1,5 +1,4 @@
 name: docker build
-
 on:
   push:
     branches: [main]
@@ -8,31 +7,28 @@ on:
     branches: [main]
   repository_dispatch:
     types: [source_update]
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 env:
   REGISTRY: ghcr.io
-
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
+      pull-requests: write
       packages: write
       attestations: write
       id-token: write
-
     strategy:
       matrix:
         image-name: [mapchete, mhub-cli-light, mhub-cli-full]
-
     steps:
       - name: Checkout Factory
         uses: actions/checkout@v4
-
+        with:
+          fetch-depth: 0
       - name: Check which image to build
         id: filter
         run: |
@@ -49,7 +45,6 @@ jobs:
           else
             echo "run=true" >> $GITHUB_OUTPUT
           fi
-
       - name: Collect Source Repos
         if: steps.filter.outputs.run == 'true'
         run: |
@@ -62,32 +57,26 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ secrets.MAPCHETE_PAT_CONTAINER_IMAGES_TOKEN || secrets.GITHUB_TOKEN }}
-
       - name: Align Dependencies
         if: steps.filter.outputs.run == 'true'
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
           source $HOME/.cargo/env
           cd ${{ matrix.image-name }}
-          
           uv init --name factory-build --lib .
-          
           [ -d ../source-core ] && mv ../source-core ./source-core
           [ -d ../source-eo ] && mv ../source-eo ./source-eo
           [ -d ../source-hub ] && mv ../source-hub ./source-hub
           [ -d ../source-cli ] && mv ../source-cli ./source-cli
-          
           DEPS=""
           [ -d source-core ] && DEPS="$DEPS ./source-core"
           [ -d source-eo ] && DEPS="$DEPS ./source-eo"
           [ -d source-hub ] && DEPS="$DEPS ./source-hub"
           [ -d source-cli ] && DEPS="$DEPS ./source-cli"
-          
           if [ -n "$DEPS" ]; then
             uv add $DEPS
           fi
           uv lock
-
       - name: Log in to GHCR
         if: steps.filter.outputs.run == 'true'
         uses: docker/login-action@v3
@@ -95,7 +84,6 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Extract metadata
         if: steps.filter.outputs.run == 'true'
         id: meta
@@ -107,10 +95,9 @@ jobs:
           tags: |
             type=match,pattern=([0-9][0-9][0-9][0-9].*),group=1
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
-            type=raw,value=dev,enable=${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') && github.event_name == 'push' }}
+            type=raw,value=dev,enable=${{ (github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/')) || github.event_name == 'pull_request' || github.event_name == 'repository_dispatch' }}
             type=raw,value=${{ github.event.client_payload.image_tag }},enable=${{ github.event_name == 'repository_dispatch' }}
             type=ref,event=pr
-
       - name: Build Local Image
         if: steps.filter.outputs.run == 'true'
         uses: docker/build-push-action@v5
@@ -119,7 +106,6 @@ jobs:
           push: false
           load: true
           tags: local-test-image:latest
-
       - name: Run Integration Tests
         if: steps.filter.outputs.run == 'true' && matrix.image-name == 'mapchete'
         run: |
@@ -135,7 +121,6 @@ jobs:
             -e CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
             local-test-image:latest \
             /bin/bash -c "uv pip install -e .[test] && uv run pytest"
-
       - name: Push Verified Image
         if: steps.filter.outputs.run == 'true' && steps.meta.outputs.tags != '' && success()
         id: push
@@ -145,7 +130,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-
+          provenance: false
+          sbom: false
       - name: Generate artifact attestation
         if: steps.filter.outputs.run == 'true' && steps.push.outputs.digest != '' && success()
         uses: actions/attest-build-provenance@v2
@@ -153,3 +139,44 @@ jobs:
           subject-name: ${{ env.REGISTRY }}/mapchete/${{ matrix.image-name}}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
+      - name: Create or Update Release PR
+        if: |
+          github.event_name == 'repository_dispatch' && 
+          matrix.image-name == 'mapchete' &&
+          github.event.client_payload.image_tag != '' &&
+          success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DISPATCH_TAG: ${{ github.event.client_payload.image_tag }}
+          SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
+        run: |
+          if [[ $DISPATCH_TAG =~ ^[0-9]{4}\.[0-9]+\.[0-9]+$ ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            CUR_YEAR=$(date +'%Y')
+            CUR_MONTH=$(date +'%-m')
+            LATEST_TAG=$(git tag -l "${CUR_YEAR}.${CUR_MONTH}.*" --sort=-v:refname | head -n 1)
+            if [ -z "$LATEST_TAG" ]; then
+              NEXT_VER="${CUR_YEAR}.${CUR_MONTH}.0"
+            else
+              PATCH=$(echo $LATEST_TAG | cut -d. -f3)
+              NEXT_VER="${CUR_YEAR}.${CUR_MONTH}.$((PATCH + 1))"
+            fi
+            BRANCH_NAME="release/${NEXT_VER}"
+            EXISTS=$(git ls-remote --heads origin "$BRANCH_NAME")
+            if [ -n "$EXISTS" ]; then
+              git fetch origin "$BRANCH_NAME"
+              git checkout "$BRANCH_NAME"
+              git merge origin/main --no-edit || echo "Merge conflict, manual intervention may be needed"
+            else
+              git checkout -b "$BRANCH_NAME"
+            fi
+            cp mapchete/uv.lock ./uv.lock
+            git add uv.lock
+            git commit -m "release: update ${NEXT_VER} dependencies (triggered by ${SOURCE_REPO} @ ${DISPATCH_TAG})" || echo "No changes to lockfile"
+            git push origin "$BRANCH_NAME"
+            gh pr create \
+              --title "Release ${NEXT_VER}" \
+              --body "Automated release candidate for container-images. Triggered by upstream update in **${SOURCE_REPO}** (${DISPATCH_TAG})." \
+              --base main --head "$BRANCH_NAME" || echo "PR updated on existing branch"
+          fi
