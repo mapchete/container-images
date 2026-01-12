@@ -11,7 +11,6 @@ WORKDIR /app
 RUN mkdir -p deps && \
     git clone --depth 1 --branch ${REPO_CLI_REF} https://github.com/mapchete/mapchete-hub-cli deps/mapchete-hub-cli
 
-COPY pyproject.toml ./
 RUN uv init --name factory-build --lib . && \
     uv add ./deps/mapchete-hub-cli && \
     uv lock && \

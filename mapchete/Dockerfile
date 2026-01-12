@@ -18,7 +18,6 @@ RUN mkdir -p deps && \
     git clone --depth 1 --branch ${REPO_EO_REF} https://github.com/mapchete/mapchete-eo deps/mapchete-eo && \
     git clone --depth 1 --branch ${REPO_HUB_REF} https://github.com/mapchete/mapchete-hub deps/mapchete-hub
 
-COPY pyproject.toml ./
 RUN uv init --name factory-build --lib . && \
     uv add ./deps/mapchete ./deps/mapchete-eo ./deps/mapchete-hub && \
     uv lock && \
