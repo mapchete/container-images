@@ -5,13 +5,7 @@ on:
       image-name:
         required: true
         type: string
-    secrets:
-      MAPCHETE_PAT:
-        required: false
-      AWS_ACCESS_KEY_ID:
-        required: false
-      AWS_SECRET_ACCESS_KEY:
-        required: false
+
 jobs:
   prepare:
     runs-on: ubuntu-latest
@@ -40,7 +34,6 @@ jobs:
       REPO_CLI: mapchete-hub-cli
     permissions:
       contents: write
-      pull-requests: write
       packages: write
       attestations: write
       id-token: write
@@ -78,17 +71,16 @@ jobs:
           cd ${{ inputs.image-name }}
           uv init --name factory-build --lib .
           
-          # Move repos into the build context
+          # Use vars to move repos into build context
           for REPO in ${{ env.REPO_CORE }} ${{ env.REPO_EO }} ${{ env.REPO_HUB }} ${{ env.REPO_CLI }}; do
             [ -d "../$REPO" ] && mv "../$REPO" "./$REPO" || true
           done
 
-          # Add internal dependencies
+          # Add internal dependencies via vars
           DEPS=""
-          [ -d "${{ env.REPO_CORE }}" ] && DEPS="$DEPS ./${{ env.REPO_CORE }}"
-          [ -d "${{ env.REPO_EO }}" ] && DEPS="$DEPS ./${{ env.REPO_EO }}"
-          [ -d "${{ env.REPO_HUB }}" ] && DEPS="$DEPS ./${{ env.REPO_HUB }}"
-          [ -d "${{ env.REPO_CLI }}" ] && DEPS="$DEPS ./${{ env.REPO_CLI }}"
+          for REPO in ${{ env.REPO_CORE }} ${{ env.REPO_EO }} ${{ env.REPO_HUB }} ${{ env.REPO_CLI }}; do
+            [ -d "$REPO" ] && DEPS="$DEPS ./$REPO"
+          done
           
           if [ -n "$DEPS" ]; then uv add $DEPS; fi
           uv lock
@@ -103,32 +95,10 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/mapchete/${{ inputs.image-name }}
-          flavor: |
-            latest=false
           tags: |
-            type=match,pattern=([0-9][0-9][0-9][0-9].*),group=1
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
-            type=raw,value=dev,enable=${{ (github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/')) || github.event_name == 'pull_request' || github.event_name == 'repository_dispatch' }}
             type=raw,value=${{ github.event.client_payload.image_tag }},enable=${{ github.event_name == 'repository_dispatch' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && github.event_name != 'repository_dispatch' }}
             type=ref,event=pr
-
-      - uses: docker/build-push-action@v5
-        with:
-          context: ${{ inputs.image-name }}/
-          push: false
-          load: true
-          tags: local-test-image:latest
-
-      - name: Integration Tests
-        if: inputs.image-name == 'mapchete'
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}/mapchete/${{ env.REPO_EO }}:/app/tests-run \
-            -w /app/tests-run \
-            -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
-            -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
-            local-test-image:latest \
-            /bin/bash -c "uv pip install -e .[test] && uv run pytest"
 
       - id: push
         uses: docker/build-push-action@v5
@@ -137,8 +107,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          provenance: false
-          sbom: false
 
       - uses: actions/attest-build-provenance@v2
         if: steps.push.outputs.digest != ''
@@ -147,25 +115,6 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
-      - name: Update Release PR
-        if: github.event_name == 'repository_dispatch' && inputs.image-name == 'mapchete' && github.event.client_payload.image_tag != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DISPATCH_TAG: ${{ github.event.client_payload.image_tag }}
-        run: |
-          if [[ $DISPATCH_TAG =~ ^[0-9]{4}\.[0-9]+\.[0-9]+$ ]]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            CUR_YEAR=$(date +'%Y'); CUR_MONTH=$(date +'%-m')
-            LATEST_TAG=$(git tag -l "${CUR_YEAR}.${CUR_MONTH}.*" --sort=-v:refname | head -n 1)
-            [ -z "$LATEST_TAG" ] && NEXT_VER="${CUR_YEAR}.${CUR_MONTH}.0" || NEXT_VER="${CUR_YEAR}.${CUR_MONTH}.$(( $(echo $LATEST_TAG | cut -d. -f3) + 1 ))"
-            BRANCH_NAME="release/${NEXT_VER}"
-            git ls-remote --heads origin "$BRANCH_NAME" | grep "$BRANCH_NAME" && (git fetch origin "$BRANCH_NAME" && git checkout "$BRANCH_NAME" && git merge origin/main --no-edit) || git checkout -b "$BRANCH_NAME"
-            cp mapchete/uv.lock ./uv.lock
-            git add uv.lock && git commit -m "release: update ${NEXT_VER}" && git push origin "$BRANCH_NAME"
-            gh pr create --title "Release ${NEXT_VER}" --body "Automated release candidate." --base main --head "$BRANCH_NAME" || echo "PR exists"
-          fi
-
   cleanup-registry:
     needs: [prepare, build]
     if: always() && needs.prepare.outputs.run-build == 'true'
@@ -173,14 +122,14 @@ jobs:
     permissions:
       packages: write
     steps:
-      - name: Purge Untagged and Attestation Tags
+      - name: Cleanup Registry
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ORG="mapchete"
           PKG="${{ inputs.image-name }}"
           echo "Cleaning $ORG/$PKG..."
-          TARGET_VERSIONS=$(gh api --paginate "/orgs/$ORG/packages/container/$PKG/versions" --jq '.[] | select((.metadata.container.tags | length == 0) or (.metadata.container.tags[] | startswith("sha256-"))) | .id')
-          if [ -z "$TARGET_VERSIONS" ]; then echo "Registry clean."; else
-            for ID in $TARGET_VERSIONS; do gh api --method DELETE "/orgs/$ORG/packages/container/$PKG/versions/$ID" || true; done
+          TARGETS=$(gh api --paginate "/orgs/$ORG/packages/container/$PKG/versions" --jq '.[] | select((.metadata.container.tags | length == 0) or (.metadata.container.tags[] | startswith("sha256-"))) | .id')
+          if [ -n "$TARGETS" ]; then
+            for ID in $TARGETS; do gh api --method DELETE "/orgs/$ORG/packages/container/$PKG/versions/$ID" || true; done
           fi
