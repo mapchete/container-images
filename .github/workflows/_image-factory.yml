@@ -150,16 +150,7 @@ jobs:
           ORG="mapchete"
           PKG="${{ inputs.image-name }}"
           echo "Cleaning $ORG/$PKG..."
-          TARGET_VERSIONS=$(gh api --paginate "/orgs/$ORG/packages/container/$PKG/versions" --jq '
-            .[] | select(
-              (.metadata.container.tags | length == 0) or 
-              (.metadata.container.tags[] | startswith("sha256-"))
-            ) | .id')
-          if [ -z "$TARGET_VERSIONS" ]; then
-            echo "Registry already clean."
-          else
-            for ID in $TARGET_VERSIONS; do
-              echo "Deleting version: $ID"
-              gh api --method DELETE "/orgs/$ORG/packages/container/$PKG/versions/$ID" || true
-            done
+          TARGET_VERSIONS=$(gh api --paginate "/orgs/$ORG/packages/container/$PKG/versions" --jq '.[] | select((.metadata.container.tags | length == 0) or (.metadata.container.tags[] | startswith("sha256-"))) | .id')
+          if [ -z "$TARGET_VERSIONS" ]; then echo "Registry clean."; else
+            for ID in $TARGET_VERSIONS; do gh api --method DELETE "/orgs/$ORG/packages/container/$PKG/versions/$ID" || true; done
           fi
