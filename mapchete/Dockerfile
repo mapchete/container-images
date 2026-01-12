@@ -25,6 +25,12 @@ RUN uv init --name factory-build --lib . && \
 
 FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0
 
+ENV WORKDIR="/app"
+ENV GML_SKIP_CORRUPTED_FEATURES=YES
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_LINK_MODE=copy
+ENV UV_NO_CACHE=YES
+
 WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/deps /app/deps
