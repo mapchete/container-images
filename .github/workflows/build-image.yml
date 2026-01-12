@@ -11,55 +11,18 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
-  prepare:
-    runs-on: ubuntu-latest
-    outputs:
-      mapchete-run: ${{ steps.f.outputs.m }}
-      light-run: ${{ steps.f.outputs.l }}
-      full-run: ${{ steps.f.outputs.f }}
-    steps:
-      - id: f
-        run: |
-          if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
-            S="${{ github.event.client_payload.source_repo }}"
-            [[ "$S" =~ ^mapchete(-eo|-hub)?$ ]] && echo "m=true" >> $GITHUB_OUTPUT || echo "m=false" >> $GITHUB_OUTPUT
-            [[ "$S" == "mapchete-hub-cli" ]] && (echo "l=true" >> $GITHUB_OUTPUT; echo "f=true" >> $GITHUB_OUTPUT) || (echo "l=false" >> $GITHUB_OUTPUT; echo "f=false" >> $GITHUB_OUTPUT)
-          else
-            echo "m=true" >> $GITHUB_OUTPUT; echo "l=true" >> $GITHUB_OUTPUT; echo "f=true" >> $GITHUB_OUTPUT
-          fi
   mapchete:
-    needs: prepare
     uses: ./.github/workflows/_build-image.yml
     with:
       image-name: mapchete
-      run-build: ${{ needs.prepare.outputs.mapchete-run }}
     secrets: inherit
   mhub-cli-light:
-    needs: prepare
     uses: ./.github/workflows/_build-image.yml
     with:
       image-name: mhub-cli-light
-      run-build: ${{ needs.prepare.outputs.light-run }}
     secrets: inherit
   mhub-cli-full:
-    needs: prepare
     uses: ./.github/workflows/_build-image.yml
     with:
       image-name: mhub-cli-full
-      run-build: ${{ needs.prepare.outputs.full-run }}
     secrets: inherit
-  janitor:
-    needs: [mapchete, mhub-cli-light, mhub-cli-full]
-    if: always()
-    runs-on: ubuntu-latest
-    permissions:
-      packages: write
-    strategy:
-      matrix:
-        image: [mapchete, mhub-cli-light, mhub-cli-full]
-    steps:
-      - name: Purge Untagged
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api --paginate /orgs/mapchete/packages/container/${{ matrix.image }}/versions --jq '.[] | select(.metadata.container.tags | length == 0) | .id' | xargs -I {} gh api --method DELETE /orgs/mapchete/packages/container/${{ matrix.image }}/versions/{} || true
