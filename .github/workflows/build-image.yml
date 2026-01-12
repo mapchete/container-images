@@ -167,7 +167,7 @@ jobs:
             if [ -n "$EXISTS" ]; then
               git fetch origin "$BRANCH_NAME"
               git checkout "$BRANCH_NAME"
-              git merge origin/main --no-edit || echo "Sync main"
+              git merge origin/main --no-edit || echo "Sync"
             else
               git checkout -b "$BRANCH_NAME"
             fi
@@ -177,13 +177,6 @@ jobs:
             git push origin "$BRANCH_NAME"
             gh pr create \
               --title "Release ${NEXT_VER}" \
-              --body "Automated release candidate. Triggered by **${SOURCE_REPO}** version ${DISPATCH_TAG}." \
+              --body "Automated release candidate. Updated by **${SOURCE_REPO}** version ${DISPATCH_TAG}." \
               --base main --head "$BRANCH_NAME" || echo "PR exists"
           fi
-      - name: Cleanup Registry
-        if: steps.push.outputs.digest != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          PKG="${{ matrix.image-name }}"
-          gh api --paginate /orgs/mapchete/packages/container/$PKG/versions --jq '.[] | select(.metadata.container.tags | length == 0) | .id' | xargs -I {} gh api --method DELETE /orgs/mapchete/packages/container/$PKG/versions/{} || true
