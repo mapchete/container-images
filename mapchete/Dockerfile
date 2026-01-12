@@ -32,4 +32,5 @@ COPY . .
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 ENV PATH="/app/.venv/bin:$PATH"
-ENTRYPOINT ["mapchete"]
+
+CMD ["mapchete", "--help"]
