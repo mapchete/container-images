@@ -7,24 +7,20 @@ on:
     branches: [main]
   repository_dispatch:
     types: [source_update]
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   mapchete:
     uses: ./.github/workflows/_image-factory.yml
     with:
       image-name: mapchete
     secrets: inherit
-
   mhub-cli-light:
     uses: ./.github/workflows/_image-factory.yml
     with:
       image-name: mhub-cli-light
     secrets: inherit
-
   mhub-cli-full:
     uses: ./.github/workflows/_image-factory.yml
     with:
