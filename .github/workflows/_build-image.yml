@@ -1,0 +1,130 @@
+name: _build-image
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        required: true
+        type: string
+      run-build:
+        required: true
+        type: string
+    secrets:
+      MAPCHETE_PAT:
+        required: false
+      AWS_ACCESS_KEY_ID:
+        required: false
+      AWS_SECRET_ACCESS_KEY:
+        required: false
+      CDSE_S3_ACCESS_KEY:
+        required: false
+      CDSE_S3_ACCESS_SECRET:
+        required: false
+
+jobs:
+  build:
+    if: inputs.run-build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Collect Source Repos
+        run: |
+          if [[ "${{ inputs.image-name }}" == "mapchete" ]]; then
+            gh repo clone mapchete/mapchete source-core -- --depth 1 || true
+            gh repo clone mapchete/mapchete-eo source-eo -- --depth 1 || true
+            gh repo clone mapchete/mapchete-hub source-hub -- --depth 1 || true
+          else
+            gh repo clone mapchete/mapchete-hub-cli source-cli -- --depth 1 || true
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.MAPCHETE_PAT || secrets.GITHUB_TOKEN }}
+      - name: Align Dependencies
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          source $HOME/.cargo/env
+          cd ${{ inputs.image-name }}
+          uv init --name factory-build --lib .
+          [ -d ../source-core ] && mv ../source-core ./source-core
+          [ -d ../source-eo ] && mv ../source-eo ./source-eo
+          [ -d ../source-hub ] && mv ../source-hub ./source-hub
+          [ -d ../source-cli ] && mv ../source-cli ./source-cli
+          DEPS=""
+          [ -d source-core ] && DEPS="$DEPS ./source-core"
+          [ -d source-eo ] && DEPS="$DEPS ./source-eo"
+          [ -d source-hub ] && DEPS="$DEPS ./source-hub"
+          [ -d source-cli ] && DEPS="$DEPS ./source-cli"
+          if [ -n "$DEPS" ]; then uv add $DEPS; fi
+          uv lock
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/mapchete/${{ inputs.image-name }}
+          flavor: |
+            latest=false
+          tags: |
+            type=match,pattern=([0-9][0-9][0-9][0-9].*),group=1
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+            type=raw,value=dev,enable=${{ (github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/')) || github.event_name == 'pull_request' || github.event_name == 'repository_dispatch' }}
+            type=raw,value=${{ github.event.client_payload.image_tag }},enable=${{ github.event_name == 'repository_dispatch' }}
+            type=ref,event=pr
+      - uses: docker/build-push-action@v5
+        with:
+          context: ${{ inputs.image-name }}/
+          push: false
+          load: true
+          tags: local-test-image:latest
+      - name: Integration Tests
+        if: inputs.image-name == 'mapchete'
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}/mapchete/source-eo:/app/tests-run \
+            -w /app/tests-run \
+            -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
+            -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
+            local-test-image:latest \
+            /bin/bash -c "uv pip install -e .[test] && uv run pytest"
+      - id: push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ inputs.image-name }}/
+          push: true
+          tags: ${{ id.meta.outputs.tags }}
+          labels: ${{ id.meta.outputs.labels }}
+          provenance: false
+          sbom: false
+      - uses: actions/attest-build-provenance@v2
+        if: steps.push.outputs.digest != ''
+        with:
+          subject-name: ghcr.io/mapchete/${{ inputs.image-name }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - name: Update Release PR
+        if: github.event_name == 'repository_dispatch' && inputs.image-name == 'mapchete' && github.event.client_payload.image_tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DISPATCH_TAG: ${{ github.event.client_payload.image_tag }}
+        run: |
+          if [[ $DISPATCH_TAG =~ ^[0-9]{4}\.[0-9]+\.[0-9]+$ ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            CUR_YEAR=$(date +'%Y'); CUR_MONTH=$(date +'%-m')
+            LATEST_TAG=$(git tag -l "${CUR_YEAR}.${CUR_MONTH}.*" --sort=-v:refname | head -n 1)
+            [ -z "$LATEST_TAG" ] && NEXT_VER="${CUR_YEAR}.${CUR_MONTH}.0" || NEXT_VER="${CUR_YEAR}.${CUR_MONTH}.$(( $(echo $LATEST_TAG | cut -d. -f3) + 1 ))"
+            BRANCH_NAME="release/${NEXT_VER}"
+            git ls-remote --heads origin "$BRANCH_NAME" | grep "$BRANCH_NAME" && (git fetch origin "$BRANCH_NAME" && git checkout "$BRANCH_NAME" && git merge origin/main --no-edit) || git checkout -b "$BRANCH_NAME"
+            cp mapchete/uv.lock ./uv.lock
+            git add uv.lock && git commit -m "release: update ${NEXT_VER}" && git push origin "$BRANCH_NAME"
+            gh pr create --title "Release ${NEXT_VER}" --body "Automated release candidate." --base main --head "$BRANCH_NAME" || echo "PR exists"
+          fi
