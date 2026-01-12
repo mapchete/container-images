@@ -93,7 +93,8 @@ jobs:
           images: ghcr.io/mapchete/${{ inputs.image-name }}
           tags: |
             type=raw,value=${{ github.event.client_payload.image_tag }},enable=${{ github.event_name == 'repository_dispatch' }}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && github.event_name != 'repository_dispatch' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && github.event_name != 'repository_dispatch' && github.event_name != 'pull_request' }}
+            type=raw,value=dev,enable=${{ github.event_name == 'pull_request' || (github.event_name == 'repository_dispatch' && github.event.client_payload.tag == 'dev') }}
             type=ref,event=pr
       - uses: docker/build-push-action@v5
         with:
