@@ -89,11 +89,14 @@ jobs:
           flavor: |
             latest=false
           tags: |
+            # 1. Manual tag (from UI)
             type=raw,value=${{ inputs.image-tag }},enable=${{ inputs.image-tag != '' }}
-            type=raw,value=${{ github.event.client_payload.image_tag }},enable=${{ github.event_name == 'repository_dispatch' && inputs.image-tag == '' }}
-            type=raw,value=dev,enable=${{ github.event_name == 'pull_request' || (github.event_name == 'repository_dispatch' && github.event.client_payload.tag == 'dev' && inputs.image-tag == '') }}
+            # 2. Automated tag ONLY if container-images repo itself is tagged
+            type=ref,event=tag
+            # 3. PRs and Dispatch rolling updates get 'dev'
+            type=raw,value=dev,enable=${{ github.event_name == 'pull_request' || github.event_name == 'repository_dispatch' }}
+            # 4. Standard PR ref for tracking
             type=ref,event=pr
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && inputs.image-tag == '' }}
 
       - id: push
         uses: docker/build-push-action@v5
@@ -116,24 +119,26 @@ jobs:
           push-to-registry: true
 
       - name: Update Version File
-        if: github.event_name == 'repository_dispatch' && github.event.client_payload.tag != ''
+        if: github.event_name == 'repository_dispatch' && github.event.client_payload.type == 'version'
         run: |
-          echo "${{ github.event.client_payload.source_repo }}: ${{ github.event.client_payload.tag }}" > ${{ inputs.image-name }}/VERSION.txt
+          echo "${{ github.event.client_payload.source_repo }}: ${{ github.event.client_payload.image_tag }}" > ${{ inputs.image-name }}/VERSION.txt
 
       - name: Create or Update Pull Request
-        if: github.event_name == 'repository_dispatch' && github.event.client_payload.tag != ''
+        if: github.event_name == 'repository_dispatch' && github.event.client_payload.type == 'version'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.MAPCHETE_PAT || secrets.GITHUB_TOKEN }}
-          commit-message: "chore: update ${{ inputs.image-name }} to ${{ github.event.client_payload.tag }}"
-          branch: "bump-${{ inputs.image-name }}"
+          commit-message: "chore: update ${{ inputs.image-name }} to ${{ github.event.client_payload.image_tag }}"
+          branch: "bump/${{ inputs.image-name }}"
           title: "🚀 Bump ${{ inputs.image-name }} version"
-          body: "Automated update triggered by `${{ github.event.client_payload.source_repo }}` version `${{ github.event.client_payload.tag }}`."
+          body: |
+            Automated update triggered by `${{ github.event.client_payload.source_repo }}`.
+            - **New Version:** `${{ github.event.client_payload.image_tag }}`
           base: main
           delete-branch: true
-          assignees: Scartography
-          reviewers: ungarj
-          labels: automated-pr
+          assignees: "scartography"
+          reviewers: "ungarj"
+          labels: "automated-pr"
 
   cleanup-registry:
     needs: [prepare, build]
