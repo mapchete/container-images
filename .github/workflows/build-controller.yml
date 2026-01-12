@@ -9,17 +9,20 @@ on:
     types: [source_update]
   workflow_dispatch:
     inputs:
+      image-tag:
+        description: 'Tag to apply to the images'
+        default: 'manual-build'
       repo-core-ref:
-        description: 'Manual override for mapchete ref'
+        description: 'mapchete ref'
         default: 'main'
       repo-eo-ref:
-        description: 'Manual override for mapchete-eo ref'
+        description: 'mapchete-eo ref'
         default: 'main'
       repo-hub-ref:
-        description: 'Manual override for mapchete-hub ref'
+        description: 'mapchete-hub ref'
         default: 'main'
       repo-cli-ref:
-        description: 'Manual override for mapchete-hub-cli ref'
+        description: 'mapchete-hub-cli ref'
         default: 'main'
 
 concurrency:
@@ -31,6 +34,7 @@ jobs:
     uses: ./.github/workflows/_image-factory.yml
     with:
       image-name: mapchete
+      # We pass the manual tag through the client_payload logic or handle it in the factory
       repo-core-ref: ${{ inputs.repo-core-ref }}
       repo-eo-ref: ${{ inputs.repo-eo-ref }}
       repo-hub-ref: ${{ inputs.repo-hub-ref }}
