@@ -1,33 +1,27 @@
-FROM ghcr.io/snakepacker/python/3.13 AS builder
+FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0 AS builder
 
-ENV WORKDIR="/home"
-ENV PATH="${WORKDIR}/.venv/bin:${PATH}"
-WORKDIR ${WORKDIR}
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl ca-certificates build-essential python3-dev && rm -rf /var/lib/apt/lists/*
 
-# install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# install system requirements and create virtual environment
-RUN apt update \
-    && apt install -y --no-install-recommends \
-        git \
-    && rm -rf /var/lib/apt/lists/*
-RUN uv venv --no-managed-python ${WORKDIR}/.venv
+ARG REPO_CLI_REF=main
 
-# install python requirements into virtual environment
-COPY requirements.in .
-RUN uv pip compile requirements.in -o requirements.txt \
-    && uv pip sync requirements.txt \
-    && rm requirements.*
+WORKDIR /app
+RUN mkdir -p deps && \
+    git clone --depth 1 --branch ${REPO_CLI_REF} https://github.com/mapchete/mapchete-hub-cli deps/mapchete-hub-cli
 
+RUN uv init --name factory-build --lib . && \
+    uv add "./deps/mapchete-hub-cli[zones]" && \
+    uv lock && \
+    uv sync --frozen --no-dev
 
-FROM ghcr.io/snakepacker/python/3.13 AS runner
+FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0
 
-ENV WORKDIR="/home"
-ENV PATH="${WORKDIR}/.venv/bin:${PATH}"
-WORKDIR ${WORKDIR}
+WORKDIR /app
+COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app/deps /app/deps
+COPY . .
 
-# copy venv from builder
-COPY --from=builder "${WORKDIR}/.venv" "${WORKDIR}/.venv"
-
-ENTRYPOINT [ "mhub" ]
+ENV PATH="/app/.venv/bin:$PATH"
+ENTRYPOINT ["mhub"]

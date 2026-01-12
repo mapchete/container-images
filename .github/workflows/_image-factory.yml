@@ -1,0 +1,154 @@
+name: _image-factory
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        required: true
+        type: string
+      image-tag:
+        type: string
+        default: ''
+      repo-core-ref:
+        type: string
+        default: ''
+      repo-eo-ref:
+        type: string
+        default: ''
+      repo-hub-ref:
+        type: string
+        default: ''
+      repo-cli-ref:
+        type: string
+        default: ''
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      run-build: ${{ steps.check.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+            S="${{ github.event.client_payload.source_repo }}"
+            T="${{ inputs.image-name }}"
+            if [[ "$T" == "mapchete" && "$S" =~ ^mapchete(-eo|-hub)?$ ]]; then echo "run=true" >> $GITHUB_OUTPUT
+            elif [[ "$T" =~ ^mhub-cli-(light|full)$ && "$S" == "mapchete-hub-cli" ]]; then echo "run=true" >> $GITHUB_OUTPUT
+            else echo "run=false" >> $GITHUB_OUTPUT; fi
+          else echo "run=true" >> $GITHUB_OUTPUT; fi
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.run-build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      attestations: write
+      id-token: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Local Validation Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ inputs.image-name }}/
+          push: false
+          load: true
+          tags: local-test-image:latest
+          build-args: |
+            REPO_CORE_REF=${{ inputs.repo-core-ref || (github.event.client_payload.source_repo == 'mapchete' && github.event.client_payload.sha) || 'main' }}
+            REPO_EO_REF=${{ inputs.repo-eo-ref || (github.event.client_payload.source_repo == 'mapchete-eo' && github.event.client_payload.sha) || 'main' }}
+            REPO_HUB_REF=${{ inputs.repo-hub-ref || (github.event.client_payload.source_repo == 'mapchete-hub' && github.event.client_payload.sha) || 'main' }}
+            REPO_CLI_REF=${{ inputs.repo-cli-ref || (github.event.client_payload.source_repo == 'mapchete-hub-cli' && github.event.client_payload.sha) || 'main' }}
+
+      - name: Integration Tests
+        if: inputs.image-name == 'mapchete'
+        run: |
+          docker run --rm \
+            -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
+            -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
+            -e CDSE_S3_ACCESS_KEY=${{ secrets.CDSE_S3_ACCESS_KEY }} \
+            -e CDSE_S3_SECRET_KEY=${{ secrets.CDSE_S3_SECRET_KEY }} \
+            -e AWS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
+            local-test-image:latest \
+            /bin/bash -c "cd deps/mapchete-eo && uv pip install -e .[test] && uv run pytest"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/mapchete/${{ inputs.image-name }}
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=${{ inputs.image-tag }},enable=${{ inputs.image-tag != '' }}
+            type=raw,value=${{ github.event.client_payload.image_tag }},enable=${{ github.event_name == 'repository_dispatch' && inputs.image-tag == '' }}
+            type=raw,value=dev,enable=${{ github.event_name == 'pull_request' || (github.event_name == 'repository_dispatch' && github.event.client_payload.tag == 'dev' && inputs.image-tag == '') }}
+            type=ref,event=pr
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && inputs.image-tag == '' }}
+
+      - id: push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ inputs.image-name }}/
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            REPO_CORE_REF=${{ inputs.repo-core-ref || (github.event.client_payload.source_repo == 'mapchete' && github.event.client_payload.sha) || 'main' }}
+            REPO_EO_REF=${{ inputs.repo-eo-ref || (github.event.client_payload.source_repo == 'mapchete-eo' && github.event.client_payload.sha) || 'main' }}
+            REPO_HUB_REF=${{ inputs.repo-hub-ref || (github.event.client_payload.source_repo == 'mapchete-hub' && github.event.client_payload.sha) || 'main' }}
+            REPO_CLI_REF=${{ inputs.repo-cli-ref || (github.event.client_payload.source_repo == 'mapchete-hub-cli' && github.event.client_payload.sha) || 'main' }}
+
+      - uses: actions/attest-build-provenance@v2
+        if: steps.push.outputs.digest != ''
+        with:
+          subject-name: ghcr.io/mapchete/${{ inputs.image-name }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Update Version File
+        if: github.event_name == 'repository_dispatch' && github.event.client_payload.tag != ''
+        run: |
+          echo "${{ github.event.client_payload.source_repo }}: ${{ github.event.client_payload.tag }}" > ${{ inputs.image-name }}/VERSION.txt
+
+      - name: Create or Update Pull Request
+        if: github.event_name == 'repository_dispatch' && github.event.client_payload.tag != ''
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.MAPCHETE_PAT || secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update ${{ inputs.image-name }} to ${{ github.event.client_payload.tag }}"
+          branch: "bump-${{ inputs.image-name }}"
+          title: "🚀 Bump ${{ inputs.image-name }} version"
+          body: "Automated update triggered by `${{ github.event.client_payload.source_repo }}` version `${{ github.event.client_payload.tag }}`."
+          base: main
+          delete-branch: true
+          assignees: Scartography
+          reviewers: ungarj
+          labels: automated-pr
+
+  cleanup-registry:
+    needs: [prepare, build]
+    if: always() && needs.prepare.outputs.run-build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Cleanup Registry
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ORG="mapchete"
+          PKG="${{ inputs.image-name }}"
+          TARGETS=$(gh api --paginate "/orgs/$ORG/packages/container/$PKG/versions" --jq '.[] | select((.metadata.container.tags | length == 0) or (.metadata.container.tags[] | startswith("sha256-"))) | .id')
+          if [ -n "$TARGETS" ]; then
+            for ID in $TARGETS; do gh api --method DELETE "/orgs/$ORG/packages/container/$PKG/versions/$ID" || true; done
+          fi

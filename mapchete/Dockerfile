@@ -1,43 +1,42 @@
 FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0 AS builder
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+ARG REPO_CORE_REF=main
+ARG REPO_EO_REF=main
+ARG REPO_HUB_REF=main
+
+WORKDIR /app
+RUN mkdir -p deps && \
+    git clone --depth 1 --branch ${REPO_CORE_REF} https://github.com/mapchete/mapchete deps/mapchete && \
+    git clone --depth 1 --branch ${REPO_EO_REF} https://github.com/mapchete/mapchete-eo deps/mapchete-eo && \
+    git clone --depth 1 --branch ${REPO_HUB_REF} https://github.com/mapchete/mapchete-hub deps/mapchete-hub
+
+RUN uv init --name factory-build --lib . && \
+    uv add ./deps/mapchete ./deps/mapchete-eo ./deps/mapchete-hub && \
+    uv lock && \
+    uv sync --frozen --no-dev
+
+FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0
+
 ENV WORKDIR="/app"
 ENV GML_SKIP_CORRUPTED_FEATURES=YES
 ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PATH="${WORKDIR}/.venv/bin:${PATH}"
-
-WORKDIR ${WORKDIR}
-
-# install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-
-# install system requirements and create virtual environment
-RUN apt-get update \
-    && apt install -y --no-install-recommends \
-        git \
-    && rm -rf /var/lib/apt/lists/* \
-    && uv venv --no-managed-python ${WORKDIR}/.venv
-
-# install python requirements into virtual environment
-COPY requirements.in .
-RUN uv pip compile requirements.in -o requirements.txt \
-    && uv pip sync requirements.txt \
-    && rm requirements.*
-
-FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0 AS runner
-
-ENV WORKDIR="/app"
-ENV UV_COMPILE_BYTECODE=1
-ENV UV_LINK_MODE=copy
 ENV UV_NO_CACHE=YES
-ENV PATH="${WORKDIR}/.venv/bin:${PATH}"
 
-WORKDIR ${WORKDIR}
-
-# make sure uv is available further on
+WORKDIR /app
+COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app/deps /app/deps
+COPY . .
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# copy venv from builder
-COPY --from=builder "${WORKDIR}/.venv" "${WORKDIR}/.venv"
+ENV PATH="/app/.venv/bin:$PATH"
+
+CMD ["mapchete", "--help"]
