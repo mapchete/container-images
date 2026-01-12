@@ -30,6 +30,7 @@ jobs:
       REPO_EO: mapchete-eo
       REPO_HUB: mapchete-hub
       REPO_CLI: mapchete-hub-cli
+      TMP_DIR: _source_repos
     permissions:
       contents: write
       packages: write
@@ -43,10 +44,11 @@ jobs:
         run: |
           REF="${{ github.event.client_payload.sha || 'main' }}"
           SRC="${{ github.event.client_payload.source_repo }}"
+          mkdir -p ${{ env.TMP_DIR }}
           clone_repo() {
             local repo=$1
             [[ "$SRC" == "$repo" ]] && BRANCH="$REF" || BRANCH="main"
-            gh repo clone "mapchete/$repo" "$repo" -- --depth 1 --branch "$BRANCH" || true
+            gh repo clone "mapchete/$repo" "${{ env.TMP_DIR }}/$repo" -- --depth 1 --branch "$BRANCH" || true
           }
           if [[ "${{ inputs.image-name }}" == "mapchete" ]]; then
             clone_repo "${{ env.REPO_CORE }}"
@@ -65,8 +67,8 @@ jobs:
           uv init --name factory-build --lib .
           mkdir -p deps
           for REPO in ${{ env.REPO_CORE }} ${{ env.REPO_EO }} ${{ env.REPO_HUB }} ${{ env.REPO_CLI }}; do
-            if [ -d "../$REPO" ]; then
-              mv "../$REPO" "./deps/$REPO"
+            if [ -d "../${{ env.TMP_DIR }}/$REPO" ]; then
+              mv "../${{ env.TMP_DIR }}/$REPO" "./deps/$REPO"
             fi
           done
           DEPS=""
@@ -122,6 +124,9 @@ jobs:
           subject-name: ghcr.io/mapchete/${{ inputs.image-name }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
+      - name: Cleanup Workspace
+        if: always()
+        run: rm -rf ${{ env.TMP_DIR }}
   cleanup-registry:
     needs: [prepare, build]
     if: always() && needs.prepare.outputs.run-build == 'true'
