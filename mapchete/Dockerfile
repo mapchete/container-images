@@ -1,19 +1,36 @@
 FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0 AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+ARG REPO_CORE_REF=main
+ARG REPO_EO_REF=main
+ARG REPO_HUB_REF=main
+
 WORKDIR /app
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-RUN apt-get update && apt install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p deps && \
+    git clone --depth 1 --branch ${REPO_CORE_REF} https://github.com/mapchete/mapchete deps/mapchete && \
+    git clone --depth 1 --branch ${REPO_EO_REF} https://github.com/mapchete/mapchete-eo deps/mapchete-eo && \
+    git clone --depth 1 --branch ${REPO_HUB_REF} https://github.com/mapchete/mapchete-hub deps/mapchete-hub
 
-ENV UV_LINK_MODE=copy
-ENV UV_COMPILE_BYTECODE=1
+COPY pyproject.toml ./
+RUN uv init --name factory-build --lib . && \
+    uv add ./deps/mapchete ./deps/mapchete-eo ./deps/mapchete-hub && \
+    uv lock && \
+    uv sync --frozen --no-dev
 
+FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0
+
+WORKDIR /app
+COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app/deps /app/deps
 COPY . .
-RUN uv sync --frozen --no-dev --no-editable
-
-FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0 AS runner
-ENV WORKDIR="/app"
-ENV PATH="${WORKDIR}/.venv/bin:${PATH}"
-ENV UV_LINK_MODE=copy
-WORKDIR ${WORKDIR}
-
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-COPY --from=builder "${WORKDIR}/.venv" "${WORKDIR}/.venv"
+
+ENV PATH="/app/.venv/bin:$PATH"
+ENTRYPOINT ["mapchete"]

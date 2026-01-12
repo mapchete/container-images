@@ -27,12 +27,6 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.run-build == 'true'
     runs-on: ubuntu-latest
-    env:
-      REPO_CORE: mapchete
-      REPO_EO: mapchete-eo
-      REPO_HUB: mapchete-hub
-      REPO_CLI: mapchete-hub-cli
-      TMP_DIR: _source_repos
     permissions:
       contents: write
       packages: write
@@ -40,52 +34,28 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+
+      - name: Build Local Test Image
+        uses: docker/build-push-action@v5
         with:
-          fetch-depth: 0
+          context: ${{ inputs.image-name }}/
+          push: false
+          load: true
+          tags: local-test-image:latest
+          build-args: |
+            REPO_CORE_REF=${{ github.event.client_payload.source_repo == 'mapchete' && github.event.client_payload.sha || 'main' }}
+            REPO_EO_REF=${{ github.event.client_payload.source_repo == 'mapchete-eo' && github.event.client_payload.sha || 'main' }}
+            REPO_HUB_REF=${{ github.event.client_payload.source_repo == 'mapchete-hub' && github.event.client_payload.sha || 'main' }}
+            REPO_CLI_REF=${{ github.event.client_payload.source_repo == 'mapchete-hub-cli' && github.event.client_payload.sha || 'main' }}
 
-      - name: Collect Source
+      - name: Integration Tests
+        if: inputs.image-name == 'mapchete'
         run: |
-          REF="${{ github.event.client_payload.sha || 'main' }}"
-          SRC="${{ github.event.client_payload.source_repo }}"
-          mkdir -p ${{ env.TMP_DIR }}
-          clone_repo() {
-            local repo=$1
-            [[ "$SRC" == "$repo" ]] && BRANCH="$REF" || BRANCH="main"
-            gh repo clone "mapchete/$repo" "${{ env.TMP_DIR }}/$repo" -- --depth 1 --branch "$BRANCH" || true
-          }
-          if [[ "${{ inputs.image-name }}" == "mapchete" ]]; then
-            clone_repo "${{ env.REPO_CORE }}"
-            clone_repo "${{ env.REPO_EO }}"
-            clone_repo "${{ env.REPO_HUB }}"
-          else
-            clone_repo "${{ env.REPO_CLI }}"
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.MAPCHETE_PAT || secrets.GITHUB_TOKEN }}
-
-      - name: Align Dependencies
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          source $HOME/.cargo/env
-          cd ${{ inputs.image-name }}
-          uv init --name factory-build --lib .
-          mkdir -p deps
-          for REPO in ${{ env.REPO_CORE }} ${{ env.REPO_EO }} ${{ env.REPO_HUB }} ${{ env.REPO_CLI }}; do
-            if [ -d "../${{ env.TMP_DIR }}/$REPO" ]; then
-              mv "../${{ env.TMP_DIR }}/$REPO" "./deps/$REPO"
-            fi
-          done
-          DEPS=""
-          for REPO in ${{ env.REPO_CORE }} ${{ env.REPO_EO }} ${{ env.REPO_HUB }} ${{ env.REPO_CLI }}; do
-            TARGET="./deps/$REPO"
-            if [ -d "$TARGET" ] && ([ -f "$TARGET/pyproject.toml" ] || [ -f "$TARGET/setup.py" ]); then
-              DEPS="$DEPS $TARGET"
-            fi
-          done
-          if [ -n "$DEPS" ]; then 
-            uv add $DEPS
-          fi
-          uv lock
+          docker run --rm \
+            -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
+            -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
+            local-test-image:latest \
+            /bin/bash -c "cd deps/mapchete-eo && uv pip install -e .[test] && uv run pytest"
 
       - uses: docker/login-action@v3
         with:
@@ -105,24 +75,6 @@ jobs:
             type=ref,event=pr
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
 
-      - uses: docker/build-push-action@v5
-        with:
-          context: ${{ inputs.image-name }}/
-          push: false
-          load: true
-          tags: local-test-image:latest
-
-      - name: Integration Tests
-        if: inputs.image-name == 'mapchete'
-        run: |
-          docker run --rm \
-            -v ${{ github.workspace }}/mapchete/deps/${{ env.REPO_EO }}:/app/tests-run \
-            -w /app/tests-run \
-            -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
-            -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
-            local-test-image:latest \
-            /bin/bash -c "uv pip install -e .[test] && uv run pytest"
-
       - id: push
         uses: docker/build-push-action@v5
         with:
@@ -130,6 +82,11 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            REPO_CORE_REF=${{ github.event.client_payload.source_repo == 'mapchete' && github.event.client_payload.sha || 'main' }}
+            REPO_EO_REF=${{ github.event.client_payload.source_repo == 'mapchete-eo' && github.event.client_payload.sha || 'main' }}
+            REPO_HUB_REF=${{ github.event.client_payload.source_repo == 'mapchete-hub' && github.event.client_payload.sha || 'main' }}
+            REPO_CLI_REF=${{ github.event.client_payload.source_repo == 'mapchete-hub-cli' && github.event.client_payload.sha || 'main' }}
 
       - uses: actions/attest-build-provenance@v2
         if: steps.push.outputs.digest != ''
@@ -137,10 +94,6 @@ jobs:
           subject-name: ghcr.io/mapchete/${{ inputs.image-name }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
-
-      - name: Cleanup Workspace
-        if: always()
-        run: rm -rf ${{ env.TMP_DIR }}
 
   cleanup-registry:
     needs: [prepare, build]
@@ -155,7 +108,6 @@ jobs:
         run: |
           ORG="mapchete"
           PKG="${{ inputs.image-name }}"
-          echo "Cleaning $ORG/$PKG..."
           TARGETS=$(gh api --paginate "/orgs/$ORG/packages/container/$PKG/versions" --jq '.[] | select((.metadata.container.tags | length == 0) or (.metadata.container.tags[] | startswith("sha256-"))) | .id')
           if [ -n "$TARGETS" ]; then
             for ID in $TARGETS; do gh api --method DELETE "/orgs/$ORG/packages/container/$PKG/versions/$ID" || true; done

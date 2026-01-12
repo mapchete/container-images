@@ -1,19 +1,28 @@
 FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0 AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl ca-certificates build-essential python3-dev && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+ARG REPO_CLI_REF=main
+
 WORKDIR /app
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-RUN apt-get update && apt install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p deps && \
+    git clone --depth 1 --branch ${REPO_CLI_REF} https://github.com/mapchete/mapchete-hub-cli deps/mapchete-hub-cli
 
-ENV UV_LINK_MODE=copy
-ENV UV_COMPILE_BYTECODE=1
+COPY pyproject.toml ./
+RUN uv init --name factory-build --lib . && \
+    uv add ./deps/mapchete-hub-cli && \
+    uv lock && \
+    uv sync --frozen --no-dev
 
+FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0
+
+WORKDIR /app
+COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app/deps /app/deps
 COPY . .
-RUN uv sync --frozen --no-dev --no-editable
 
-FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0 AS runner
-ENV WORKDIR="/app"
-ENV PATH="${WORKDIR}/.venv/bin:${PATH}"
-ENV UV_LINK_MODE=copy
-WORKDIR ${WORKDIR}
-
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-COPY --from=builder "${WORKDIR}/.venv" "${WORKDIR}/.venv"
+ENV PATH="/app/.venv/bin:$PATH"
+ENTRYPOINT ["mhub"]
