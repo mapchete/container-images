@@ -19,7 +19,6 @@ on:
         required: false
       CDSE_S3_ACCESS_SECRET:
         required: false
-
 jobs:
   build:
     if: inputs.run-build == 'true'
@@ -100,8 +99,8 @@ jobs:
         with:
           context: ${{ inputs.image-name }}/
           push: true
-          tags: ${{ id.meta.outputs.tags }}
-          labels: ${{ id.meta.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           provenance: false
           sbom: false
       - uses: actions/attest-build-provenance@v2
