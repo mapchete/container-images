@@ -5,6 +5,18 @@ on:
       image-name:
         required: true
         type: string
+      repo-core-ref:
+        type: string
+        default: ''
+      repo-eo-ref:
+        type: string
+        default: ''
+      repo-hub-ref:
+        type: string
+        default: ''
+      repo-cli-ref:
+        type: string
+        default: ''
 
 jobs:
   prepare:
@@ -43,10 +55,10 @@ jobs:
           load: true
           tags: local-test-image:latest
           build-args: |
-            REPO_CORE_REF=${{ github.event.client_payload.source_repo == 'mapchete' && github.event.client_payload.sha || 'main' }}
-            REPO_EO_REF=${{ github.event.client_payload.source_repo == 'mapchete-eo' && github.event.client_payload.sha || 'main' }}
-            REPO_HUB_REF=${{ github.event.client_payload.source_repo == 'mapchete-hub' && github.event.client_payload.sha || 'main' }}
-            REPO_CLI_REF=${{ github.event.client_payload.source_repo == 'mapchete-hub-cli' && github.event.client_payload.sha || 'main' }}
+            REPO_CORE_REF=${{ inputs.repo-core-ref || (github.event.client_payload.source_repo == 'mapchete' && github.event.client_payload.sha) || 'main' }}
+            REPO_EO_REF=${{ inputs.repo-eo-ref || (github.event.client_payload.source_repo == 'mapchete-eo' && github.event.client_payload.sha) || 'main' }}
+            REPO_HUB_REF=${{ inputs.repo-hub-ref || (github.event.client_payload.source_repo == 'mapchete-hub' && github.event.client_payload.sha) || 'main' }}
+            REPO_CLI_REF=${{ inputs.repo-cli-ref || (github.event.client_payload.source_repo == 'mapchete-hub-cli' && github.event.client_payload.sha) || 'main' }}
 
       - name: Integration Tests
         if: inputs.image-name == 'mapchete'
@@ -87,10 +99,10 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            REPO_CORE_REF=${{ github.event.client_payload.source_repo == 'mapchete' && github.event.client_payload.sha || 'main' }}
-            REPO_EO_REF=${{ github.event.client_payload.source_repo == 'mapchete-eo' && github.event.client_payload.sha || 'main' }}
-            REPO_HUB_REF=${{ github.event.client_payload.source_repo == 'mapchete-hub' && github.event.client_payload.sha || 'main' }}
-            REPO_CLI_REF=${{ github.event.client_payload.source_repo == 'mapchete-hub-cli' && github.event.client_payload.sha || 'main' }}
+            REPO_CORE_REF=${{ inputs.repo-core-ref || (github.event.client_payload.source_repo == 'mapchete' && github.event.client_payload.sha) || 'main' }}
+            REPO_EO_REF=${{ inputs.repo-eo-ref || (github.event.client_payload.source_repo == 'mapchete-eo' && github.event.client_payload.sha) || 'main' }}
+            REPO_HUB_REF=${{ inputs.repo-hub-ref || (github.event.client_payload.source_repo == 'mapchete-hub' && github.event.client_payload.sha) || 'main' }}
+            REPO_CLI_REF=${{ inputs.repo-cli-ref || (github.event.client_payload.source_repo == 'mapchete-hub-cli' && github.event.client_payload.sha) || 'main' }}
 
       - uses: actions/attest-build-provenance@v2
         if: steps.push.outputs.digest != ''
