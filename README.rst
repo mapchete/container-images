@@ -6,8 +6,8 @@ Mapchete Container Images
    :target: https://github.com/mapchete/container-images/releases
    :alt: Latest Release
 
-.. image:: https://img.shields.io/github/actions/workflow/status/mapchete/container-images/build-image.yml
-   :target: https://github.com/mapchete/container-images/actions/workflows/build-image.yml
+.. image:: https://img.shields.io/github/actions/workflow/status/mapchete/container-images/build-controller.yml
+   :target: https://github.com/mapchete/container-images/actions/workflows/build-controller.yml
    :alt: Build Status
 
 .. image:: https://img.shields.io/github/license/mapchete/container-images
