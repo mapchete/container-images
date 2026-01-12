@@ -1,4 +1,4 @@
-name: _build-image
+name: _image-factory
 on:
   workflow_call:
     inputs:
@@ -136,15 +136,30 @@ jobs:
             git add uv.lock && git commit -m "release: update ${NEXT_VER}" && git push origin "$BRANCH_NAME"
             gh pr create --title "Release ${NEXT_VER}" --body "Automated release candidate." --base main --head "$BRANCH_NAME" || echo "PR exists"
           fi
-  janitor:
+  registry-cleanup:
     needs: [prepare, build]
     if: always() && needs.prepare.outputs.run-build == 'true'
     runs-on: ubuntu-latest
     permissions:
       packages: write
     steps:
-      - name: Purge Untagged
+      - name: Purge Untagged and Attestation Tags
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh api --paginate /orgs/mapchete/packages/container/${{ inputs.image-name }}/versions --jq '.[] | select(.metadata.container.tags | length == 0) | .id' | xargs -I {} gh api --method DELETE /orgs/mapchete/packages/container/${{ inputs.image-name }}/versions/{} || true
+          ORG="mapchete"
+          PKG="${{ inputs.image-name }}"
+          echo "Cleaning $ORG/$PKG..."
+          TARGET_VERSIONS=$(gh api --paginate "/orgs/$ORG/packages/container/$PKG/versions" --jq '
+            .[] | select(
+              (.metadata.container.tags | length == 0) or 
+              (.metadata.container.tags[] | startswith("sha256-"))
+            ) | .id')
+          if [ -z "$TARGET_VERSIONS" ]; then
+            echo "Registry already clean."
+          else
+            for ID in $TARGET_VERSIONS; do
+              echo "Deleting version: $ID"
+              gh api --method DELETE "/orgs/$ORG/packages/container/$PKG/versions/$ID" || true
+            done
+          fi

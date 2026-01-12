@@ -1,4 +1,4 @@
-name: docker build
+name: build controller
 on:
   push:
     branches: [main]
@@ -12,17 +12,17 @@ concurrency:
   cancel-in-progress: true
 jobs:
   mapchete:
-    uses: ./.github/workflows/_build-image.yml
+    uses: ./.github/workflows/_image-factory.yml
     with:
       image-name: mapchete
     secrets: inherit
   mhub-cli-light:
-    uses: ./.github/workflows/_build-image.yml
+    uses: ./.github/workflows/_image-factory.yml
     with:
       image-name: mhub-cli-light
     secrets: inherit
   mhub-cli-full:
-    uses: ./.github/workflows/_build-image.yml
+    uses: ./.github/workflows/_image-factory.yml
     with:
       image-name: mhub-cli-full
     secrets: inherit
