@@ -91,8 +91,18 @@ jobs:
           tags: |
             type=raw,value=${{ inputs.image-tag }},enable=${{ inputs.image-tag != '' }}
             type=ref,event=tag
-            type=raw,value=latest,enable=${{ (github.event_name == 'repository_dispatch' && github.event.client_payload.image_tag == 'latest') || github.ref == 'refs/heads/main' }}
-            type=raw,value=dev,enable=${{ github.event_name == 'repository_dispatch' || github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
+            
+            # BUILD LATEST:
+            # - Only on push to main or 'latest' dispatch
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || (github.event_name == 'repository_dispatch' && github.event.client_payload.image_tag == 'latest') }}
+            
+            # BUILD DEV:
+            # - On PRs
+            # - On push to main
+            # - On 'dev' dispatch
+            # - On 'latest' dispatch (as requested)
+            type=raw,value=dev,enable=${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || (github.event_name == 'repository_dispatch' && (github.event.client_payload.image_tag == 'dev' || github.event.client_payload.image_tag == 'latest')) }}
+            
             type=ref,event=pr
 
       - id: push
