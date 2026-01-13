@@ -14,8 +14,8 @@ RUN git clone https://github.com/mapchete/mapchete-hub-cli deps/mapchete-hub-cli
     cd deps/mapchete-hub-cli && git checkout ${REPO_CLI_REF}
 
 RUN uv init --name factory-build --lib . && \
-    uv add ./deps/mapchete-hub-cli && \
-    uv lock && \
+    uv add --editable ./deps/mapchete-hub-cli && \
+    uv lock --upgrade && \
     uv sync --frozen --no-dev
 
 # Calculate the hash here so the CI can extract it if needed

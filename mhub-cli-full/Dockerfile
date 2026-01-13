@@ -14,12 +14,17 @@ RUN git clone https://github.com/mapchete/mapchete-hub-cli deps/mapchete-hub-cli
     cd deps/mapchete-hub-cli && git checkout ${REPO_CLI_REF}
 
 RUN uv init --name factory-build --lib . && \
-    uv add "./deps/mapchete-hub-cli[zones]" && \
-    uv lock && \
+    uv add --editable "./deps/mapchete-hub-cli[zones]" && \
+    uv lock --upgrade && \
     uv sync --frozen --no-dev
 
 # Generate the fingerprint based on the resolved lockfile
-RUN sha256sum uv.lock | cut -d' ' -f1 > /app/uv_fingerprint
+# Combine the lockfile hash AND a hash of the source code 
+# to ensure code-only changes are captured
+RUN sha256sum uv.lock > /app/combined_hash && \
+    find deps/ -type f -exec sha256sum {} + | sort | sha256sum >> /app/combined_hash && \
+    sha256sum /app/combined_hash | cut -d' ' -f1 > /app/uv_fingerprint
+
 
 FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0
 
