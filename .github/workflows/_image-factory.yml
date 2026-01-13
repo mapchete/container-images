@@ -46,17 +46,39 @@ jobs:
 
       - id: stamp
         run: |
-          CORE="${{ inputs.repo-core-ref || (github.event.client_payload.source_repo == 'mapchete' && github.event.client_payload.sha) || 'main' }}"
-          EO="${{ inputs.repo-eo-ref || (github.event.client_payload.source_repo == 'mapchete-eo' && github.event.client_payload.sha) || 'main' }}"
-          HUB="${{ inputs.repo-hub-ref || (github.event.client_payload.source_repo == 'mapchete-hub' && github.event.client_payload.sha) || 'main' }}"
-          CLI="${{ inputs.repo-cli-ref || (github.event.client_payload.source_repo == 'mapchete-hub-cli' && github.event.client_payload.sha) || 'main' }}"
+# Helper function to resolve refs to SHAs
+          resolve_sha() {
+            local repo=$1
+            local ref=$2
+            if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "$ref" # It's already a SHA
+            else
+              # Fetch the SHA for the branch/tag from remote
+              git ls-remote https://github.com/mapchete/$repo.git "$ref" | awk '{print $1}'
+            fi
+          }
+
+          # 1. Resolve every input to a real SHA
+          CORE_REF="${{ inputs.repo-core-ref || (github.event.client_payload.source_repo == 'mapchete' && github.event.client_payload.sha) || 'main' }}"
+          CORE=$(resolve_sha "mapchete" "$CORE_REF")
+
+          EO_REF="${{ inputs.repo-eo-ref || (github.event.client_payload.source_repo == 'mapchete-eo' && github.event.client_payload.sha) || 'main' }}"
+          EO=$(resolve_sha "mapchete-eo" "$EO_REF")
+
+          HUB_REF="${{ inputs.repo-hub-ref || (github.event.client_payload.source_repo == 'mapchete-hub' && github.event.client_payload.sha) || 'main' }}"
+          HUB=$(resolve_sha "mapchete-hub" "$HUB_REF")
+
+          CLI_REF="${{ inputs.repo-cli-ref || (github.event.client_payload.source_repo == 'mapchete-hub-cli' && github.event.client_payload.sha) || 'main' }}"
+          CLI=$(resolve_sha "mapchete-hub-cli" "$CLI_REF")
           
+          # 2. Build context-specific fingerprints using ONLY SHAs
           if [[ "${{ inputs.image-name }}" == "mapchete" ]]; then
             MANIFEST="${CORE}|${EO}|${HUB}|none"
           else
             MANIFEST="none|none|${HUB}|${CLI}"
           fi
           
+          # 3. Export outputs
           echo "manifest=$MANIFEST" >> $GITHUB_OUTPUT
           echo "core=$CORE" >> $GITHUB_OUTPUT
           echo "eo=$EO" >> $GITHUB_OUTPUT
