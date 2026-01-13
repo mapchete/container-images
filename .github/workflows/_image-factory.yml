@@ -75,23 +75,21 @@ jobs:
             REPO_HUB_REF=${{ needs.prepare.outputs.hub-ref }}
             REPO_CLI_REF=${{ needs.prepare.outputs.cli-ref }}
 
-      - name: UV Fingerprint Check
-        id: finger_check
+      - name: Image Fingerprint Check
+        id: image-fingerprint-check
         run: |
-          # 1. Local extraction (remains the same)
+          # 1. Extract Local Combined Fingerprint (Lockfile + Source)
           LOCAL_FINGERPRINT=$(docker run --rm --entrypoint /bin/sh local-test-image:latest -c "cat /app/uv_fingerprint" | tr -d '\r\n ')
           echo "fingerprint=$LOCAL_FINGERPRINT" >> $GITHUB_OUTPUT
 
-          # 2. Remote Tag (remains the same)
+          # 2. Determine target tag for comparison
           REMOTE_TAG="dev"
           if [[ "${{ github.event_name }}" == "repository_dispatch" && "${{ github.event.client_payload.image_tag }}" == "latest" ]]; then 
             REMOTE_TAG="latest"
           fi
           
-          # 3. Use Skopeo to get Labels
-          # Skopeo returns the actual image configuration including labels.
+          # 3. Pull remote label via Skopeo
           echo "Inspecting: ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG"
-          
           REMOTE_FINGERPRINT=$(skopeo inspect docker://ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG 2>/dev/null | jq -r '.Labels["org.mapchete.image_fingerprint"] // "none"' | tr -d '\r\n ')
           
           echo "Local Fingerprint:  [$LOCAL_FINGERPRINT]"
@@ -99,36 +97,38 @@ jobs:
 
           if [[ "$LOCAL_FINGERPRINT" == "$REMOTE_FINGERPRINT" && "$REMOTE_FINGERPRINT" != "none" && "${{ github.ref_type }}" != "tag" ]]; then
             echo "changed=false" >> $GITHUB_OUTPUT
-            echo "✅ Content matches registry. Skipping."
+            echo "✅ Content matches registry. Skipping further actions."
           else
             echo "changed=true" >> $GITHUB_OUTPUT
-            echo "🚀 Content change or missing remote. Proceeding."
+            echo "🚀 Content change detected. Proceeding to tests."
           fi
 
       - name: Integration Tests
-        if: steps.finger_check.outputs.changed == 'true'
+        if: steps.image-fingerprint-check.outputs.changed == 'true'
         run: |
-          if docker run --rm --entrypoint /bin/bash local-test-image:latest -c "ls deps/mapchete-eo/tests" >/dev/null 2>&1; then
+          TEST_DIR="deps/mapchete-hub"
+          if [[ "${{ inputs.image-name }}" == "mapchete" ]]; then TEST_DIR="deps/mapchete-eo"; fi
+
+          if docker run --rm --entrypoint /bin/sh local-test-image:latest -c "ls -d $TEST_DIR/tests" >/dev/null 2>&1; then
             docker run --rm \
+              -e MAPCHETE_TEST=TRUE \
               -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
               -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
-              -e CDSE_S3_ACCESS_KEY=${{ secrets.CDSE_S3_ACCESS_KEY }} \
-              -e CDSE_S3_SECRET_KEY=${{ secrets.CDSE_S3_SECRET_KEY }} \
               local-test-image:latest \
-              /bin/bash -c "cd deps/mapchete-eo && uv pip install -e .[test] && uv run pytest"
+              /bin/bash -c "cd $TEST_DIR && uv pip install -e .[test] && uv run pytest -v"
           else
-            echo "No tests found for ${{ inputs.image-name }}."
+            echo "No tests found in $TEST_DIR."
           fi
 
       - uses: docker/login-action@v3
-        if: steps.uv_check.outputs.changed == 'true'
+        if: steps.image-fingerprint-check.outputs.changed == 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: meta
-        if: steps.uv_check.outputs.changed == 'true'
+        if: steps.image-fingerprint-check.outputs.changed == 'true'
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/mapchete/${{ inputs.image-name }}
@@ -142,7 +142,7 @@ jobs:
             type=ref,event=pr
 
       - id: push
-        if: steps.uv_check.outputs.changed == 'true'
+        if: steps.image-fingerprint-check.outputs.changed == 'true'
         uses: docker/build-push-action@v5
         with:
           context: ${{ inputs.image-name }}/
@@ -154,16 +154,16 @@ jobs:
             REPO_EO_REF=${{ needs.prepare.outputs.eo-ref }}
             REPO_HUB_REF=${{ needs.prepare.outputs.hub-ref }}
             REPO_CLI_REF=${{ needs.prepare.outputs.cli-ref }}
-            IMAGE_FINGERPRINT=${{ steps.finger_check.outputs.fingerprint }}
+            IMAGE_FINGERPRINT=${{ steps.image-fingerprint-check.outputs.fingerprint }}
 
       - uses: actions/attest-build-provenance@v2
-        if: steps.uv_check.outputs.changed == 'true' && steps.push.outputs.digest != ''
+        if: steps.image-fingerprint-check.outputs.changed == 'true' && steps.push.outputs.digest != ''
         with:
           subject-name: ghcr.io/mapchete/${{ inputs.image-name }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
-      - name: Create or Update Pull Request
+      - name: Automated Version PR
         if: github.event_name == 'repository_dispatch' && github.event.client_payload.type == 'version'
         uses: peter-evans/create-pull-request@v6
         with:
@@ -172,9 +172,9 @@ jobs:
           branch: "bump/${{ inputs.image-name }}"
           title: "🚀 Bump ${{ inputs.image-name }} version"
           body: |
-            Automated update triggered by `${{ github.event.client_payload.source_repo }}`.
+            Automated update from `${{ github.event.client_payload.source_repo }}`.
             - **New Version:** `${{ github.event.client_payload.image_tag }}`
-            - **UV Hash:** `${{ steps.uv_check.outputs.uv-hash }}`
+            - **Image Fingerprint:** `${{ steps.image-fingerprint-check.outputs.fingerprint }}`
           base: main
           delete-branch: true
           assignees: "scartography"
