@@ -108,7 +108,7 @@ jobs:
       - name: Integration Tests
         if: steps.finger_check.outputs.changed == 'true'
         run: |
-          if docker run --rm local-test-image:latest ls -d deps/mapchete-eo/tests >/dev/null 2>&1; then
+          if docker run --rm --entrypoint /bin/bash local-test-image:latest -c "ls deps/mapchete-eo/tests" >/dev/null 2>&1; then
             docker run --rm \
               -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
               -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
