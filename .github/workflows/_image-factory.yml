@@ -76,36 +76,37 @@ jobs:
             REPO_CLI_REF=${{ needs.prepare.outputs.cli-ref }}
 
       - name: UV Fingerprint Check
-        id: uv_check
+        id: finger_check
         run: |
-          # 1. Extract hash from locally built image
-          UV_HASH=$(docker run --rm --entrypoint /bin/sh local-test-image:latest -c "cat /app/uv_fingerprint" | tr -d '\r\n ')
-          echo "uv-hash=$UV_HASH" >> $GITHUB_OUTPUT
+          # 1. Local extraction (remains the same)
+          LOCAL_FINGERPRINT=$(docker run --rm --entrypoint /bin/sh local-test-image:latest -c "cat /app/uv_fingerprint" | tr -d '\r\n ')
+          echo "fingerprint=$LOCAL_FINGERPRINT" >> $GITHUB_OUTPUT
 
-          # 2. Identify remote tag to compare against
+          # 2. Remote Tag (remains the same)
           REMOTE_TAG="dev"
           if [[ "${{ github.event_name }}" == "repository_dispatch" && "${{ github.event.client_payload.image_tag }}" == "latest" ]]; then 
             REMOTE_TAG="latest"
           fi
           
-          # 3. Pull remote label via manifest (no image pull required)
-          echo "Checking ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG"
-          REMOTE_JSON=$(docker manifest inspect ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG 2>/dev/null || echo "{}")
-          REMOTE_HASH=$(echo "$REMOTE_JSON" | jq -r '.config.labels["org.mapchete.image_fingerprint"] // "none"' | tr -d '\r\n ')
+          # 3. Use Skopeo to get Labels
+          # Skopeo returns the actual image configuration including labels.
+          echo "Inspecting: ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG"
           
-          echo "Local Hash:  [$UV_HASH]"
-          echo "Remote Hash: [$REMOTE_HASH]"
+          REMOTE_FINGERPRINT=$(skopeo inspect docker://ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG 2>/dev/null | jq -r '.Labels["org.mapchete.image_fingerprint"] // "none"' | tr -d '\r\n ')
+          
+          echo "Local Fingerprint:  [$LOCAL_FINGERPRINT]"
+          echo "Remote Fingerprint: [$REMOTE_FINGERPRINT]"
 
-          if [[ "$UV_HASH" == "$REMOTE_HASH" && "$REMOTE_HASH" != "none" && "${{ github.ref_type }}" != "tag" ]]; then
+          if [[ "$LOCAL_FINGERPRINT" == "$REMOTE_FINGERPRINT" && "$REMOTE_FINGERPRINT" != "none" && "${{ github.ref_type }}" != "tag" ]]; then
             echo "changed=false" >> $GITHUB_OUTPUT
-            echo "✅ Environment matches registry. Skipping tests/push."
+            echo "✅ Content matches registry. Skipping."
           else
             echo "changed=true" >> $GITHUB_OUTPUT
-            echo "🚀 Environment change detected. Proceeding."
+            echo "🚀 Content change or missing remote. Proceeding."
           fi
 
       - name: Integration Tests
-        if: steps.uv_check.outputs.changed == 'true'
+        if: steps.finger_check.outputs.changed == 'true'
         run: |
           if docker run --rm local-test-image:latest ls -d deps/mapchete-eo/tests >/dev/null 2>&1; then
             docker run --rm \
