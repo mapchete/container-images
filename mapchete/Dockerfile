@@ -25,8 +25,8 @@ RUN git clone https://github.com/mapchete/mapchete-hub deps/mapchete-hub && \
     cd deps/mapchete-hub && git checkout ${REPO_HUB_REF}
 
 RUN uv init --name factory-build --lib . && \
-    uv add --editable ./deps/mapchete ./deps/mapchete-eo ./deps/mapchete-hub && \
-    uv lock --upgrade && \
+    uv add ./deps/mapchete ./deps/mapchete-eo ./deps/mapchete-hub && \
+    uv lock && \
     uv sync --frozen --no-dev
 
 # Generate the fingerprint based on the resolved lockfile
@@ -40,6 +40,8 @@ RUN sha256sum uv.lock > /app/combined_hash && \
 FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0
 
 ARG IMAGE_FINGERPRINT=unknown
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
 
