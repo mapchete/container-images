@@ -18,12 +18,23 @@ RUN uv init --name factory-build --lib . && \
     uv lock && \
     uv sync --frozen --no-dev
 
+# Generate the fingerprint based on the resolved lockfile
+RUN sha256sum uv.lock | cut -d' ' -f1 > /app/uv_fingerprint
+
 FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0
 
+ARG IMAGE_FINGERPRINT=unknown
+
 WORKDIR /app
+
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/deps /app/deps
+COPY --from=builder /app/uv_fingerprint /app/uv_fingerprint
+
 COPY . .
+
+LABEL org.mapchete.image_fingerprint=$IMAGE_FINGERPRINT
+LABEL org.mapchete.uv_lock_hash=$IMAGE_FINGERPRINT
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENTRYPOINT ["mhub"]
