@@ -46,7 +46,7 @@ jobs:
 
       - id: stamp
         run: |
-# Helper function to resolve refs to SHAs
+          # Helper function to resolve refs to SHAs
           resolve_sha() {
             local repo=$1
             local ref=$2
