@@ -114,27 +114,37 @@ jobs:
       - name: Verify Build & Sync Check
         id: uv_check
         run: |
-          # 1. Verify Git Sync Integrity
-          ACTUAL_MANIFEST=$(docker run --rm local-test-image:latest cat /app/build_manifest)
-          EXPECTED_MANIFEST="${{ needs.prepare.outputs.expected-manifest }}"
+          # 1. Get Docker Reality and strip ALL whitespaces/newlines
+          ACTUAL_MANIFEST=$(docker run --rm --entrypoint /bin/sh local-test-image:latest -c "cat /app/build_manifest" | tr -d '\r\n ')
+          
+          # 2. Get CI Intent and strip ALL whitespaces/newlines
+          EXPECTED_MANIFEST=$(echo "${{ needs.prepare.outputs.expected-manifest }}" | tr -d '\r\n ')
+          
+          echo "CI Expected: [$EXPECTED_MANIFEST]"
+          echo "Image Actual: [$ACTUAL_MANIFEST]"
+          
           if [ "$ACTUAL_MANIFEST" != "$EXPECTED_MANIFEST" ]; then
-            echo "❌ Git SHA Mismatch! CI expected $EXPECTED_MANIFEST but Docker built $ACTUAL_MANIFEST"
+            echo "❌ Git SHA Mismatch!"
             exit 1
           fi
+          echo "✅ Git Sync Verified."
 
-          # 2. Extract UV Fingerprint
-          UV_HASH=$(docker run --rm local-test-image:latest cat /app/uv_fingerprint)
+          # 3. Extract UV Fingerprint (also stripped)
+          UV_HASH=$(docker run --rm --entrypoint /bin/sh local-test-image:latest -c "cat /app/uv_fingerprint" | tr -d '\r\n ')
           echo "uv-hash=$UV_HASH" >> $GITHUB_OUTPUT
-
-          # 3. Compare with Remote Registry Label
-          REMOTE_TAG="dev"
-          if [[ "${{ github.event_name }}" == "repository_dispatch" && "${{ github.event.client_payload.image_tag }}" == "latest" ]]; then REMOTE_TAG="latest"; fi
           
-          REMOTE_HASH=$(docker manifest inspect ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG 2>/dev/null | jq -r '.config.labels["org.mapchete.uv_lock_hash"]' || echo "none")
+          # 4. Remote Registry Comparison
+          REMOTE_TAG="dev"
+          if [[ "${{ github.event_name }}" == "repository_dispatch" && "${{ github.event.client_payload.image_tag }}" == "latest" ]]; then 
+            REMOTE_TAG="latest"
+          fi
+          
+          # Use -s to silce manifest errors, and handle empty results
+          REMOTE_HASH=$(docker manifest inspect ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG 2>/dev/null | jq -r '.config.labels["org.mapchete.uv_lock_hash"] // "none"' | tr -d '\r\n ')
           
           if [[ "$UV_HASH" == "$REMOTE_HASH" && "${{ github.ref_type }}" != "tag" ]]; then
             echo "changed=false" >> $GITHUB_OUTPUT
-            echo "✅ Content Match: $UV_HASH matches registry. Skipping push."
+            echo "✅ Content Match: $UV_HASH matches registry. Skipping tests and push."
           else
             echo "changed=true" >> $GITHUB_OUTPUT
             echo "🚀 Content Change: New fingerprint $UV_HASH"
