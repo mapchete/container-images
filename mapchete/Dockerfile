@@ -29,13 +29,27 @@ RUN uv init --name factory-build --lib . && \
     uv lock && \
     uv sync --frozen --no-dev
 
+# Generate the fingerprint based on the resolved lockfile
+RUN sha256sum uv.lock | cut -d' ' -f1 > /app/uv_fingerprint
+# Also keep the manifest for the CI sync check
+RUN CORE_SHA=$(git -C deps/mapchete rev-parse HEAD 2>/dev/null || echo "none") && \
+    EO_SHA=$(git -C deps/mapchete-eo rev-parse HEAD 2>/dev/null || echo "none") && \
+    HUB_SHA=$(git -C deps/mapchete-hub rev-parse HEAD 2>/dev/null || echo "none") && \
+    echo "${CORE_SHA}|${EO_SHA}|${HUB_SHA}}" > /app/build_manifest
+
 FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0
+
+ARG IMAGE_FINGERPRINT=unknown
 
 WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/deps /app/deps
 COPY . .
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+COPY --from=builder /app/uv_fingerprint /app/uv_fingerprint
+COPY --from=builder /app/build_manifest /app/build_manifest
+LABEL org.mapchete.uv_lock_hash=$IMAGE_FINGERPRINT
 
 ENV PATH="/app/.venv/bin:$PATH"
 
