@@ -154,7 +154,7 @@ jobs:
             REPO_EO_REF=${{ needs.prepare.outputs.eo-ref }}
             REPO_HUB_REF=${{ needs.prepare.outputs.hub-ref }}
             REPO_CLI_REF=${{ needs.prepare.outputs.cli-ref }}
-            IMAGE_FINGERPRINT=${{ steps.uv_check.outputs.uv-hash }}
+            IMAGE_FINGERPRINT=${{ steps.finger_check.outputs.fingerprint }}
 
       - uses: actions/attest-build-provenance@v2
         if: steps.uv_check.outputs.changed == 'true' && steps.push.outputs.digest != ''
