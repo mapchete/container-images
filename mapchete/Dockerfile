@@ -33,7 +33,13 @@ RUN uv init --name factory-build --lib . && \
 # Combine the lockfile hash AND a hash of the source code 
 # to ensure code-only changes are captured
 RUN sha256sum uv.lock > /app/combined_hash && \
-    find deps/ -type f -exec sha256sum {} + | sort | sha256sum >> /app/combined_hash && \
+    # 1. Find all relevant files (py, toml, yaml)
+    # 2. Exclude .git and hidden directories
+    # 3. Use 'cat' to hash content only (ignoring mtime) 
+    # 4. Sort to ensure identical order
+    find deps/ -type f \( -name "*.py" -o -name "*.toml" -o -name "*.yaml" \) \
+    -not -path '*/.*' | sort | xargs sha256sum >> /app/combined_hash && \
+    # Create final fingerprint
     sha256sum /app/combined_hash | cut -d' ' -f1 > /app/uv_fingerprint
 
 
