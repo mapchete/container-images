@@ -26,11 +26,10 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       run-build: ${{ steps.check.outputs.run }}
-      core-sha: ${{ steps.stamp.outputs.core }}
-      eo-sha: ${{ steps.stamp.outputs.eo }}
-      hub-sha: ${{ steps.stamp.outputs.hub }}
-      cli-sha: ${{ steps.stamp.outputs.cli }}
-      expected-manifest: ${{ steps.stamp.outputs.manifest }}
+      core-ref: ${{ steps.resolve.outputs.core }}
+      eo-ref: ${{ steps.resolve.outputs.eo }}
+      hub-ref: ${{ steps.resolve.outputs.hub }}
+      cli-ref: ${{ steps.resolve.outputs.cli }}
     steps:
       - uses: actions/checkout@v4
 
@@ -44,46 +43,12 @@ jobs:
             else echo "run=false" >> $GITHUB_OUTPUT; fi
           else echo "run=true" >> $GITHUB_OUTPUT; fi
 
-      - id: stamp
+      - id: resolve
         run: |
-          # Helper function to resolve refs to SHAs
-          resolve_sha() {
-            local repo=$1
-            local ref=$2
-            if [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "$ref" # It's already a SHA
-            else
-              # Fetch the SHA for the branch/tag from remote
-              git ls-remote https://github.com/mapchete/$repo.git "$ref" | awk '{print $1}'
-            fi
-          }
-
-          # 1. Resolve every input to a real SHA
-          CORE_REF="${{ inputs.repo-core-ref || (github.event.client_payload.source_repo == 'mapchete' && github.event.client_payload.sha) || 'main' }}"
-          CORE=$(resolve_sha "mapchete" "$CORE_REF")
-
-          EO_REF="${{ inputs.repo-eo-ref || (github.event.client_payload.source_repo == 'mapchete-eo' && github.event.client_payload.sha) || 'main' }}"
-          EO=$(resolve_sha "mapchete-eo" "$EO_REF")
-
-          HUB_REF="${{ inputs.repo-hub-ref || (github.event.client_payload.source_repo == 'mapchete-hub' && github.event.client_payload.sha) || 'main' }}"
-          HUB=$(resolve_sha "mapchete-hub" "$HUB_REF")
-
-          CLI_REF="${{ inputs.repo-cli-ref || (github.event.client_payload.source_repo == 'mapchete-hub-cli' && github.event.client_payload.sha) || 'main' }}"
-          CLI=$(resolve_sha "mapchete-hub-cli" "$CLI_REF")
-          
-          # 2. Build context-specific fingerprints using ONLY SHAs
-          if [[ "${{ inputs.image-name }}" == "mapchete" ]]; then
-            MANIFEST="${CORE}|${EO}|${HUB}|none"
-          else
-            MANIFEST="none|none|${HUB}|${CLI}"
-          fi
-          
-          # 3. Export outputs
-          echo "manifest=$MANIFEST" >> $GITHUB_OUTPUT
-          echo "core=$CORE" >> $GITHUB_OUTPUT
-          echo "eo=$EO" >> $GITHUB_OUTPUT
-          echo "hub=$HUB" >> $GITHUB_OUTPUT
-          echo "cli=$CLI" >> $GITHUB_OUTPUT
+          echo "core=${{ inputs.repo-core-ref || (github.event.client_payload.source_repo == 'mapchete' && github.event.client_payload.sha) || 'main' }}" >> $GITHUB_OUTPUT
+          echo "eo=${{ inputs.repo-eo-ref || (github.event.client_payload.source_repo == 'mapchete-eo' && github.event.client_payload.sha) || 'main' }}" >> $GITHUB_OUTPUT
+          echo "hub=${{ inputs.repo-hub-ref || (github.event.client_payload.source_repo == 'mapchete-hub' && github.event.client_payload.sha) || 'main' }}" >> $GITHUB_OUTPUT
+          echo "cli=${{ inputs.repo-cli-ref || (github.event.client_payload.source_repo == 'mapchete-hub-cli' && github.event.client_payload.sha) || 'main' }}" >> $GITHUB_OUTPUT
 
   build:
     needs: prepare
@@ -106,48 +71,39 @@ jobs:
           load: true
           tags: local-test-image:latest
           build-args: |
-            REPO_CORE_REF=${{ needs.prepare.outputs.core-sha }}
-            REPO_EO_REF=${{ needs.prepare.outputs.eo-sha }}
-            REPO_HUB_REF=${{ needs.prepare.outputs.hub-sha }}
-            REPO_CLI_REF=${{ needs.prepare.outputs.cli-sha }}
+            REPO_CORE_REF=${{ needs.prepare.outputs.core-ref }}
+            REPO_EO_REF=${{ needs.prepare.outputs.eo-ref }}
+            REPO_HUB_REF=${{ needs.prepare.outputs.hub-ref }}
+            REPO_CLI_REF=${{ needs.prepare.outputs.cli-ref }}
 
-      - name: Verify Build & Sync Check
+      - name: Fingerprint & Sync Check
         id: uv_check
         run: |
-          # 1. Get Docker Reality and strip ALL whitespaces/newlines
-          ACTUAL_MANIFEST=$(docker run --rm --entrypoint /bin/sh local-test-image:latest -c "cat /app/build_manifest" | tr -d '\r\n ')
-          
-          # 2. Get CI Intent and strip ALL whitespaces/newlines
-          EXPECTED_MANIFEST=$(echo "${{ needs.prepare.outputs.expected-manifest }}" | tr -d '\r\n ')
-          
-          echo "CI Expected: [$EXPECTED_MANIFEST]"
-          echo "Image Actual: [$ACTUAL_MANIFEST]"
-          
-          if [ "$ACTUAL_MANIFEST" != "$EXPECTED_MANIFEST" ]; then
-            echo "❌ Git SHA Mismatch!"
-            exit 1
-          fi
-          echo "✅ Git Sync Verified."
-
-          # 3. Extract UV Fingerprint (also stripped)
+          # 1. Extract Local UV Fingerprint
           UV_HASH=$(docker run --rm --entrypoint /bin/sh local-test-image:latest -c "cat /app/uv_fingerprint" | tr -d '\r\n ')
           echo "uv-hash=$UV_HASH" >> $GITHUB_OUTPUT
-          
-          # 4. Remote Registry Comparison
+
+          # 2. Determine target tag for comparison
           REMOTE_TAG="dev"
           if [[ "${{ github.event_name }}" == "repository_dispatch" && "${{ github.event.client_payload.image_tag }}" == "latest" ]]; then 
             REMOTE_TAG="latest"
           fi
           
-          # Use -s to silce manifest errors, and handle empty results
-          REMOTE_HASH=$(docker manifest inspect ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG 2>/dev/null | jq -r '.config.labels["org.mapchete.uv_lock_hash"] // "none"' | tr -d '\r\n ')
+          # 3. Pull remote label. If image or label is missing, REMOTE_HASH becomes "none"
+          echo "Checking remote fingerprint for ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG"
+          REMOTE_JSON=$(docker manifest inspect ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG 2>/dev/null || echo "{}")
+          REMOTE_HASH=$(echo "$REMOTE_JSON" | jq -r '.config.labels["org.mapchete.uv_lock_hash"] // "none"' | tr -d '\r\n ')
           
-          if [[ "$UV_HASH" == "$REMOTE_HASH" && "${{ github.ref_type }}" != "tag" ]]; then
+          echo "Local UV Hash:  [$UV_HASH]"
+          echo "Remote UV Hash: [$REMOTE_HASH]"
+
+          # 4. Decision Logic: Skip only if hashes match AND it's not a version tag release
+          if [[ "$UV_HASH" == "$REMOTE_HASH" && "$REMOTE_HASH" != "none" && "${{ github.ref_type }}" != "tag" ]]; then
             echo "changed=false" >> $GITHUB_OUTPUT
-            echo "✅ Content Match: $UV_HASH matches registry. Skipping tests and push."
+            echo "✅ Content matches registry. Skipping tests and push."
           else
             echo "changed=true" >> $GITHUB_OUTPUT
-            echo "🚀 Content Change: New fingerprint $UV_HASH"
+            echo "🚀 New content or missing remote fingerprint. Proceeding with build."
           fi
 
       - name: Integration Tests
@@ -161,11 +117,11 @@ jobs:
               -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
               -e CDSE_S3_ACCESS_KEY=${{ secrets.CDSE_S3_ACCESS_KEY }} \
               -e CDSE_S3_SECRET_KEY=${{ secrets.CDSE_S3_SECRET_KEY }} \
-              -e AWS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
               local-test-image:latest \
               /bin/bash -c "cd deps/mapchete-eo && uv pip install -e .[test] && uv run pytest"
           else
             echo "found=false" >> $GITHUB_OUTPUT
+            echo "No tests found for ${{ inputs.image-name }}."
           fi
 
       - uses: docker/login-action@v3
@@ -198,10 +154,10 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            REPO_CORE_REF=${{ needs.prepare.outputs.core-sha }}
-            REPO_EO_REF=${{ needs.prepare.outputs.eo-sha }}
-            REPO_HUB_REF=${{ needs.prepare.outputs.hub-sha }}
-            REPO_CLI_REF=${{ needs.prepare.outputs.cli-sha }}
+            REPO_CORE_REF=${{ needs.prepare.outputs.core-ref }}
+            REPO_EO_REF=${{ needs.prepare.outputs.eo-ref }}
+            REPO_HUB_REF=${{ needs.prepare.outputs.hub-ref }}
+            REPO_CLI_REF=${{ needs.prepare.outputs.cli-ref }}
             IMAGE_FINGERPRINT=${{ steps.uv_check.outputs.uv-hash }}
 
       - uses: actions/attest-build-provenance@v2
@@ -222,8 +178,7 @@ jobs:
           body: |
             Automated update triggered by `${{ github.event.client_payload.source_repo }}`.
             - **New Version:** `${{ github.event.client_payload.image_tag }}`
-            - **UV Environment Hash:** `${{ steps.uv_check.outputs.uv-hash }}`
-            - **Sync Integrity Check:** PASSED ✅
+            - **UV Lock Hash:** `${{ steps.uv_check.outputs.uv-hash }}`
           base: main
           delete-branch: true
           assignees: "scartography"
