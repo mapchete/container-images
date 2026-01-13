@@ -32,7 +32,6 @@ jobs:
       cli-ref: ${{ steps.resolve.outputs.cli }}
     steps:
       - uses: actions/checkout@v4
-
       - id: check
         run: |
           if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
@@ -63,7 +62,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build Local Validation Image
+      - name: Build Local Image
         uses: docker/build-push-action@v5
         with:
           context: ${{ inputs.image-name }}/
@@ -76,42 +75,39 @@ jobs:
             REPO_HUB_REF=${{ needs.prepare.outputs.hub-ref }}
             REPO_CLI_REF=${{ needs.prepare.outputs.cli-ref }}
 
-      - name: Fingerprint & Sync Check
+      - name: UV Fingerprint Check
         id: uv_check
         run: |
-          # 1. Extract Local UV Fingerprint
+          # 1. Extract hash from locally built image
           UV_HASH=$(docker run --rm --entrypoint /bin/sh local-test-image:latest -c "cat /app/uv_fingerprint" | tr -d '\r\n ')
           echo "uv-hash=$UV_HASH" >> $GITHUB_OUTPUT
 
-          # 2. Determine target tag for comparison
+          # 2. Identify remote tag to compare against
           REMOTE_TAG="dev"
           if [[ "${{ github.event_name }}" == "repository_dispatch" && "${{ github.event.client_payload.image_tag }}" == "latest" ]]; then 
             REMOTE_TAG="latest"
           fi
           
-          # 3. Pull remote label. If image or label is missing, REMOTE_HASH becomes "none"
-          echo "Checking remote fingerprint for ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG"
+          # 3. Pull remote label via manifest (no image pull required)
+          echo "Checking ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG"
           REMOTE_JSON=$(docker manifest inspect ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG 2>/dev/null || echo "{}")
           REMOTE_HASH=$(echo "$REMOTE_JSON" | jq -r '.config.labels["org.mapchete.uv_lock_hash"] // "none"' | tr -d '\r\n ')
           
-          echo "Local UV Hash:  [$UV_HASH]"
-          echo "Remote UV Hash: [$REMOTE_HASH]"
+          echo "Local Hash:  [$UV_HASH]"
+          echo "Remote Hash: [$REMOTE_HASH]"
 
-          # 4. Decision Logic: Skip only if hashes match AND it's not a version tag release
           if [[ "$UV_HASH" == "$REMOTE_HASH" && "$REMOTE_HASH" != "none" && "${{ github.ref_type }}" != "tag" ]]; then
             echo "changed=false" >> $GITHUB_OUTPUT
-            echo "✅ Content matches registry. Skipping tests and push."
+            echo "✅ Environment matches registry. Skipping tests/push."
           else
             echo "changed=true" >> $GITHUB_OUTPUT
-            echo "🚀 New content or missing remote fingerprint. Proceeding with build."
+            echo "🚀 Environment change detected. Proceeding."
           fi
 
       - name: Integration Tests
         if: steps.uv_check.outputs.changed == 'true'
-        id: tests
         run: |
           if docker run --rm local-test-image:latest ls -d deps/mapchete-eo/tests >/dev/null 2>&1; then
-            echo "found=true" >> $GITHUB_OUTPUT
             docker run --rm \
               -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
               -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
@@ -120,7 +116,6 @@ jobs:
               local-test-image:latest \
               /bin/bash -c "cd deps/mapchete-eo && uv pip install -e .[test] && uv run pytest"
           else
-            echo "found=false" >> $GITHUB_OUTPUT
             echo "No tests found for ${{ inputs.image-name }}."
           fi
 
@@ -178,7 +173,7 @@ jobs:
           body: |
             Automated update triggered by `${{ github.event.client_payload.source_repo }}`.
             - **New Version:** `${{ github.event.client_payload.image_tag }}`
-            - **UV Lock Hash:** `${{ steps.uv_check.outputs.uv-hash }}`
+            - **UV Hash:** `${{ steps.uv_check.outputs.uv-hash }}`
           base: main
           delete-branch: true
           assignees: "scartography"
