@@ -53,8 +53,5 @@ LABEL org.mapchete.image_fingerprint=$IMAGE_FINGERPRINT
 LABEL org.mapchete.uv_lock_hash=$IMAGE_FINGERPRINT
 
 ENV PATH="/app/.venv/bin:$PATH"
-ENTRYPOINT ["mhub"]
-
-ENV PATH="/app/.venv/bin:$PATH"
 
 CMD ["mapchete", "--help"]
