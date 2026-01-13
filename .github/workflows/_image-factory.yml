@@ -91,7 +91,7 @@ jobs:
           # 3. Pull remote label via manifest (no image pull required)
           echo "Checking ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG"
           REMOTE_JSON=$(docker manifest inspect ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG 2>/dev/null || echo "{}")
-          REMOTE_HASH=$(echo "$REMOTE_JSON" | jq -r '.config.labels["org.mapchete.uv_lock_hash"] // "none"' | tr -d '\r\n ')
+          REMOTE_HASH=$(echo "$REMOTE_JSON" | jq -r '.config.labels["org.mapchete.image_fingerprint"] // "none"' | tr -d '\r\n ')
           
           echo "Local Hash:  [$UV_HASH]"
           echo "Remote Hash: [$REMOTE_HASH]"
