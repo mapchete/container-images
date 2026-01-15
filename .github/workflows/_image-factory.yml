@@ -8,16 +8,16 @@ on:
       image-tag:
         type: string
         default: ''
-      repo-core-ref:
+      mapchete-ref:
         type: string
         default: ''
-      repo-eo-ref:
+      mapchete-eo-ref:
         type: string
         default: ''
-      repo-hub-ref:
+      mapchete-hub-ref:
         type: string
         default: ''
-      repo-cli-ref:
+      mapchete-hub-cli-ref:
         type: string
         default: ''
 
@@ -26,10 +26,10 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       run-build: ${{ steps.check.outputs.run }}
-      core-ref: ${{ steps.resolve.outputs.core }}
-      eo-ref: ${{ steps.resolve.outputs.eo }}
-      hub-ref: ${{ steps.resolve.outputs.hub }}
-      cli-ref: ${{ steps.resolve.outputs.cli }}
+      mapchete-ref: ${{ steps.resolve.outputs.mapchete }}
+      mapchete-eo-ref: ${{ steps.resolve.outputs.eo }}
+      mapchete-hub-ref: ${{ steps.resolve.outputs.hub }}
+      mapchete-hub-cli-ref: ${{ steps.resolve.outputs.cli }}
     steps:
       - uses: actions/checkout@v4
       - id: check
@@ -44,10 +44,16 @@ jobs:
 
       - id: resolve
         run: |
-          echo "core=${{ inputs.repo-core-ref || (github.event.client_payload.source_repo == 'mapchete' && github.event.client_payload.sha) || 'main' }}" >> $GITHUB_OUTPUT
-          echo "eo=${{ inputs.repo-eo-ref || (github.event.client_payload.source_repo == 'mapchete-eo' && github.event.client_payload.sha) || 'main' }}" >> $GITHUB_OUTPUT
-          echo "hub=${{ inputs.repo-hub-ref || (github.event.client_payload.source_repo == 'mapchete-hub' && github.event.client_payload.sha) || 'main' }}" >> $GITHUB_OUTPUT
-          echo "cli=${{ inputs.repo-cli-ref || (github.event.client_payload.source_repo == 'mapchete-hub-cli' && github.event.client_payload.sha) || 'main' }}" >> $GITHUB_OUTPUT
+          # Load versions from versions.yml
+          MAPCHETE_DEFAULT=$(grep '^MAPCHETE_REF:' versions.yml | cut -d' ' -f2 || echo "main")
+          MAPCHETE_EO_DEFAULT=$(grep '^MAPCHETE_EO_REF:' versions.yml | cut -d' ' -f2 || echo "main")
+          MAPCHETE_HUB_DEFAULT=$(grep '^MAPCHETE_HUB_REF:' versions.yml | cut -d' ' -f2 || echo "main")
+          MAPCHETE_HUB_CLI_DEFAULT=$(grep '^MAPCHETE_HUB_CLI_REF:' versions.yml | cut -d' ' -f2 || echo "main")
+
+          echo "mapchete=${{ inputs.mapchete-ref || (github.event.client_payload.source_repo == 'mapchete' && github.event.client_payload.sha) || '$MAPCHETE_DEFAULT' }}" >> $GITHUB_OUTPUT
+          echo "eo=${{ inputs.mapchete-eo-ref || (github.event.client_payload.source_repo == 'mapchete-eo' && github.event.client_payload.sha) || '$MAPCHETE_EO_DEFAULT' }}" >> $GITHUB_OUTPUT
+          echo "hub=${{ inputs.mapchete-hub-ref || (github.event.client_payload.source_repo == 'mapchete-hub' && github.event.client_payload.sha) || '$MAPCHETE_HUB_DEFAULT' }}" >> $GITHUB_OUTPUT
+          echo "cli=${{ inputs.mapchete-hub-cli-ref || (github.event.client_payload.source_repo == 'mapchete-hub-cli' && github.event.client_payload.sha) || '$MAPCHETE_HUB_CLI_DEFAULT' }}" >> $GITHUB_OUTPUT
 
   build:
     needs: prepare
@@ -70,10 +76,10 @@ jobs:
           load: true
           tags: local-test-image:latest
           build-args: |
-            REPO_CORE_REF=${{ needs.prepare.outputs.core-ref }}
-            REPO_EO_REF=${{ needs.prepare.outputs.eo-ref }}
-            REPO_HUB_REF=${{ needs.prepare.outputs.hub-ref }}
-            REPO_CLI_REF=${{ needs.prepare.outputs.cli-ref }}
+            MAPCHETE_REF=${{ needs.prepare.outputs.mapchete-ref }}
+            MAPCHETE_EO_REF=${{ needs.prepare.outputs.mapchete-eo-ref }}
+            MAPCHETE_HUB_REF=${{ needs.prepare.outputs.mapchete-hub-ref }}
+            MAPCHETE_HUB_CLI_REF=${{ needs.prepare.outputs.mapchete-hub-cli-ref }}
 
       - name: Image Fingerprint Check
         id: image-fingerprint-check
@@ -150,10 +156,10 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            REPO_CORE_REF=${{ needs.prepare.outputs.core-ref }}
-            REPO_EO_REF=${{ needs.prepare.outputs.eo-ref }}
-            REPO_HUB_REF=${{ needs.prepare.outputs.hub-ref }}
-            REPO_CLI_REF=${{ needs.prepare.outputs.cli-ref }}
+            MAPCHETE_REF=${{ needs.prepare.outputs.mapchete-ref }}
+            MAPCHETE_EO_REF=${{ needs.prepare.outputs.mapchete-eo-ref }}
+            MAPCHETE_HUB_REF=${{ needs.prepare.outputs.mapchete-hub-ref }}
+            MAPCHETE_HUB_CLI_REF=${{ needs.prepare.outputs.mapchete-hub-cli-ref }}
             IMAGE_FINGERPRINT=${{ steps.image-fingerprint-check.outputs.fingerprint }}
 
       - uses: actions/attest-build-provenance@v2

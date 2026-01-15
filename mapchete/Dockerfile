@@ -8,21 +8,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-ARG REPO_CORE_REF=main
-ARG REPO_EO_REF=main
-ARG REPO_HUB_REF=main
+ARG MAPCHETE_REF=main
+ARG MAPCHETE_EO_REF=main
+ARG MAPCHETE_HUB_REF=main
 
 WORKDIR /app
 RUN mkdir -p deps/mapchete deps/mapchete-eo deps/mapchete-hub
 
 RUN git clone https://github.com/mapchete/mapchete deps/mapchete && \
-    cd deps/mapchete && git checkout ${REPO_CORE_REF}
+    cd deps/mapchete && git checkout ${MAPCHETE_REF}
 
 RUN git clone https://github.com/mapchete/mapchete-eo deps/mapchete-eo && \
-    cd deps/mapchete-eo && git checkout ${REPO_EO_REF}
+    cd deps/mapchete-eo && git checkout ${MAPCHETE_EO_REF}
 
 RUN git clone https://github.com/mapchete/mapchete-hub deps/mapchete-hub && \
-    cd deps/mapchete-hub && git checkout ${REPO_HUB_REF}
+    cd deps/mapchete-hub && git checkout ${MAPCHETE_HUB_REF}
 
 RUN uv init --name factory-build --lib .
 

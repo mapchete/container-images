@@ -5,13 +5,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-ARG REPO_CLI_REF=main
+ARG MAPCHETE_HUB_CLI_REF=main
 
 WORKDIR /app
 RUN mkdir -p deps/mapchete-hub-cli
 
 RUN git clone https://github.com/mapchete/mapchete-hub-cli deps/mapchete-hub-cli && \
-    cd deps/mapchete-hub-cli && git checkout ${REPO_CLI_REF}
+    cd deps/mapchete-hub-cli && git checkout ${MAPCHETE_HUB_CLI_REF}
 
 RUN uv init --name factory-build --lib . && \
     uv add "./deps/mapchete-hub-cli[zones]" && \

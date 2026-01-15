@@ -12,16 +12,16 @@ on:
       image-tag:
         description: 'Tag to apply to the images'
         default: 'manual-build'
-      repo-core-ref:
+      mapchete-ref:
         description: 'mapchete ref'
         default: 'main'
-      repo-eo-ref:
+      mapchete-eo-ref:
         description: 'mapchete-eo ref'
         default: 'main'
-      repo-hub-ref:
+      mapchete-hub-ref:
         description: 'mapchete-hub ref'
         default: 'main'
-      repo-cli-ref:
+      mapchete-hub-cli-ref:
         description: 'mapchete-hub-cli ref'
         default: 'main'
 
@@ -35,28 +35,28 @@ jobs:
     with:
       image-name: mapchete
       # We pass the manual tag through the client_payload logic or handle it in the factory
-      repo-core-ref: ${{ inputs.repo-core-ref }}
-      repo-eo-ref: ${{ inputs.repo-eo-ref }}
-      repo-hub-ref: ${{ inputs.repo-hub-ref }}
-      repo-cli-ref: ${{ inputs.repo-cli-ref }}
+      mapchete-ref: ${{ inputs.mapchete-ref }}
+      mapchete-eo-ref: ${{ inputs.mapchete-eo-ref }}
+      mapchete-hub-ref: ${{ inputs.mapchete-hub-ref }}
+      mapchete-hub-cli-ref: ${{ inputs.mapchete-hub-cli-ref }}
     secrets: inherit
 
   mhub-cli-light:
     uses: ./.github/workflows/_image-factory.yml
     with:
       image-name: mhub-cli-light
-      repo-core-ref: ${{ inputs.repo-core-ref }}
-      repo-eo-ref: ${{ inputs.repo-eo-ref }}
-      repo-hub-ref: ${{ inputs.repo-hub-ref }}
-      repo-cli-ref: ${{ inputs.repo-cli-ref }}
+      mapchete-ref: ${{ inputs.mapchete-ref }}
+      mapchete-eo-ref: ${{ inputs.mapchete-eo-ref }}
+      mapchete-hub-ref: ${{ inputs.mapchete-hub-ref }}
+      mapchete-hub-cli-ref: ${{ inputs.mapchete-hub-cli-ref }}
     secrets: inherit
 
   mhub-cli-full:
     uses: ./.github/workflows/_image-factory.yml
     with:
       image-name: mhub-cli-full
-      repo-core-ref: ${{ inputs.repo-core-ref }}
-      repo-eo-ref: ${{ inputs.repo-eo-ref }}
-      repo-hub-ref: ${{ inputs.repo-hub-ref }}
-      repo-cli-ref: ${{ inputs.repo-cli-ref }}
+      mapchete-ref: ${{ inputs.mapchete-ref }}
+      mapchete-eo-ref: ${{ inputs.mapchete-eo-ref }}
+      mapchete-hub-ref: ${{ inputs.mapchete-hub-ref }}
+      mapchete-hub-cli-ref: ${{ inputs.mapchete-hub-cli-ref }}
     secrets: inherit
