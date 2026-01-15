@@ -23,7 +23,7 @@ The image is hosted on the GitHub Container Registry (ghcr.io).
 
 mapchete
 ~~~~~~~~
-The image is based on ``ghcr.io/osgeo/gdal:ubuntu-small-3.11.3`` (using Python ``3.12.3`` and GDAL ``3.11.3``) with the most recent versions of mapchete including the mapchete EO extension and mapchete Hub.
+The image is based on ``ghcr.io/osgeo/gdal:ubuntu-small-3.12.0`` (using Python ``3.12.3`` and GDAL ``3.12.0``) with the most recent versions of mapchete including the mapchete EO extension and mapchete Hub.
 
 .. code-block:: shell
 
@@ -40,4 +40,25 @@ This repository uses an automated workflow to clean up old, untagged images. The
 * Version tags (e.g., ``2025.8.1``)
 
 All other images (i.e., those tagged with a commit SHA) are subject to cleanup to keep the registry tidy.
+
+
+Build Control
+-------------
+
+Images can be manually rebuilt via the `build-controller <https://github.com/mapchete/container-images/actions/workflows/build-controller.yml>`_ workflow. This allows for manual triggers with custom tags and repository references.
+
+
+Version Management
+------------------
+
+The default versions (branches, tags, or SHAs) for the dependent repositories are managed in the `versions.yml <versions.yml>`_ file.
+
+.. code-block:: yaml
+
+   MAPCHETE_REF: main
+   MAPCHETE_EO_REF: main
+   MAPCHETE_HUB_REF: main
+   MAPCHETE_HUB_CLI_REF: main
+
+When creating a release tag in this repository, these versions are "frozen" for that specific image tag, ensuring reproducible builds.
 
