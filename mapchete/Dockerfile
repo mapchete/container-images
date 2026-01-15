@@ -24,10 +24,17 @@ RUN git clone https://github.com/mapchete/mapchete-eo deps/mapchete-eo && \
 RUN git clone https://github.com/mapchete/mapchete-hub deps/mapchete-hub && \
     cd deps/mapchete-hub && git checkout ${REPO_HUB_REF}
 
-RUN uv init --name factory-build --lib . && \
-    uv add ./deps/mapchete ./deps/mapchete-eo ./deps/mapchete-hub && \
-    uv lock && \
-    uv sync --frozen --no-dev
+RUN uv init --name factory-build --lib .
+
+RUN MAPCHETE_HASH=$(git -C deps/mapchete rev-parse HEAD) && \
+    EO_HASH=$(git -C deps/mapchete-eo rev-parse HEAD) && \
+    HUB_HASH=$(git -C deps/mapchete-hub rev-parse HEAD) && \
+    uv add \
+      "mapchete @ git+https://github.com/mapchete/mapchete.git@$MAPCHETE_HASH" \
+      "mapchete-eo @ git+https://github.com/mapchete/mapchete-eo.git@$EO_HASH" \
+      "mapchete-hub @ git+https://github.com/mapchete/mapchete-hub.git@$HUB_HASH"
+
+RUN uv sync --frozen --no-dev
 
 # Generate the fingerprint based on the resolved lockfile
 # Combine the lockfile hash AND a hash of the source code 
