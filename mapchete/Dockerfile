@@ -54,6 +54,11 @@ FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0
 
 ARG IMAGE_FINGERPRINT=unknown
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libglib2.0-0 \
+    libxcb1 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
