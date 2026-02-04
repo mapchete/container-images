@@ -88,7 +88,7 @@ jobs:
             
             echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
             echo "mode=rc" >> $GITHUB_OUTPUT
-            TARGET_LATEST="true" # RC builds always update latest per your requirement
+            TARGET_LATEST="true" 
 
           else
             echo "tag=dev" >> $GITHUB_OUTPUT
@@ -100,7 +100,6 @@ jobs:
       - name: Generate Summary
         if: always()
         run: |
-          # Determine the visual Build Decision flag
           if [[ "${{ steps.check.outputs.run }}" == "true" ]]; then
             DECISION="## ⏩ BUILD PROCEEDING"
           else
@@ -111,21 +110,27 @@ jobs:
           TAG="${{ steps.version.outputs.tag }}"
           LATEST="${{ steps.version.outputs.target_latest }}"
           
-          # Build a visual list of tags
-          FINAL_TAGS=""
-          [[ "$MODE" == "rc" ]] && FINAL_TAGS="\`rc-$TAG\`" || FINAL_TAGS="\`$TAG\`"
-          [[ "$LATEST" == "true" ]] && FINAL_TAGS="$FINAL_TAGS, \`latest\`"
+          # Build a visual list of tags for the summary
+          # Handle the RC prefixing only for the visual display here
+          if [[ "$MODE" == "rc" ]]; then
+            FINAL_TAGS="\`rc-$TAG\`"
+          else
+            FINAL_TAGS="\`$TAG\`"
+          fi
+          
+          # Add latest to the visual list if targeted
+          if [[ "$LATEST" == "true" || "${{ github.ref_name }}" == "main" ]]; then
+            FINAL_TAGS="$FINAL_TAGS, \`latest\`"
+          fi
 
           echo "$DECISION" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
           echo "### 🛠️ Build Preparation Summary" >> $GITHUB_STEP_SUMMARY
           
-          # Key Metadata Table
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
           echo "| **Target Image** | \`${{ inputs.image-name }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Operation Mode** | \`${MODE || 'N/A'}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Primary Version** | \`$TAG\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Operation Mode** | \`${MODE:-N/A}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Registry Tags** | **$FINAL_TAGS** |" >> $GITHUB_STEP_SUMMARY
           echo "| **Trigger Event** | \`${{ github.event_name }}\` |" >> $GITHUB_STEP_SUMMARY
           
