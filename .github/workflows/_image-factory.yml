@@ -135,6 +135,7 @@ jobs:
       - name: Generate Summary
         if: always()
         run: |
+          # 1. Decision Header
           if [[ "${{ steps.check.outputs.run }}" == "true" ]]; then
             DECISION="## ⏩ BUILD PROCEEDING"
           else
@@ -144,20 +145,26 @@ jobs:
           MODE="${{ steps.version.outputs.mode }}"
           TAG="${{ steps.version.outputs.tag }}"
           LATEST="${{ steps.version.outputs.target_latest }}"
+          EVENT="${{ github.event_name }}"
           
-          # Build a visual list of tags for the summary
-          # Handle the RC prefixing only for the visual display here
+          # 2. Track Identification Logic
+          if [[ "$MODE" == "rc" || "$MODE" == "release" || "$EVENT" == "pull_request" ]]; then
+            ACTIVE_TRACK="RELEASE 🧊 (Pinned)"
+          else
+            ACTIVE_TRACK="ROLLING 🌀 (Latest)"
+          fi
+
+          # 3. Registry Tag Preview
           if [[ "$MODE" == "rc" ]]; then
             FINAL_TAGS="\`rc-$TAG\`"
           else
             FINAL_TAGS="\`$TAG\`"
           fi
-          
-          # Add latest to the visual list if targeted
           if [[ "$LATEST" == "true" || "${{ github.ref_name }}" == "main" ]]; then
             FINAL_TAGS="$FINAL_TAGS, \`latest\`"
           fi
 
+          # 4. Write Main Table
           echo "$DECISION" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
           echo "### 🛠️ Build Preparation Summary" >> $GITHUB_STEP_SUMMARY
@@ -166,30 +173,32 @@ jobs:
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
           echo "| **Target Image** | \`${{ inputs.image-name }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Operation Mode** | \`${MODE:-N/A}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Resolution Track** | **$ACTIVE_TRACK** |" >> $GITHUB_STEP_SUMMARY
           echo "| **Registry Tags** | **$FINAL_TAGS** |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Trigger Event** | \`${{ github.event_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Trigger Event** | \`${EVENT}\` |" >> $GITHUB_STEP_SUMMARY
           
-          # 1. Repository Dispatch Details (Conditional)
-          if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+          # 5. Repository Dispatch Details (Conditional)
+          if [[ "$EVENT" == "repository_dispatch" ]]; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "#### 📡 Incoming Dispatch Payload" >> $GITHUB_STEP_SUMMARY
             echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
             echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
             echo "| **Source Repo** | \`${{ github.event.client_payload.source_repo }}\` |" >> $GITHUB_STEP_SUMMARY
             echo "| **Event Type** | \`${{ github.event.client_payload.type }}\` |" >> $GITHUB_STEP_SUMMARY
-            echo "| **Payload Tag** | \`${{ github.event.client_payload.image_tag || 'N/A' }}\` |" >> $GITHUB_STEP_SUMMARY
-            echo "| **Payload SHA** | \`${{ github.event.client_payload.sha || 'N/A' }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Payload Ref** | \`${{ github.event.client_payload.image_tag || github.event.client_payload.sha || 'N/A' }}\` |" >> $GITHUB_STEP_SUMMARY
           fi
 
-          # 2. Final Resolved Versions for Build Args
+          # 6. Final Resolved Versions (The current 'Truth' for this build)
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### 📦 Resolved Component Versions" >> $GITHUB_STEP_SUMMARY
+          echo "> These versions are derived from the **$ACTIVE_TRACK** track, potentially overridden by manual inputs or dispatch payloads." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Component | Resolved Reference |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| **mapchete** | \`${{ steps.resolve.outputs.mapchete }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **mapchete-eo** | \`${{ steps.resolve.outputs.eo }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **mapchete-hub** | \`${{ steps.resolve.outputs.hub }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **mapchete-hub-cli** | \`${{ steps.resolve.outputs.cli }}\` |" >> $GITHUB_STEP_SUMMARY          
+          echo "| **mapchete** | \`${{ steps.resolve.outputs.mapchete || 'main' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **mapchete-eo** | \`${{ steps.resolve.outputs.eo || 'main' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **mapchete-hub** | \`${{ steps.resolve.outputs.hub || 'main' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **mapchete-hub-cli** | \`${{ steps.resolve.outputs.cli || 'main' }}\` |" >> $GITHUB_STEP_SUMMARY         
 
   build:
     needs: prepare
