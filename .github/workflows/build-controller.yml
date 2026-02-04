@@ -1,4 +1,5 @@
 name: build-controller
+
 on:
   push:
     branches: [main]
@@ -10,31 +11,31 @@ on:
   workflow_dispatch:
     inputs:
       image-tag:
-        description: 'Tag to apply to the images'
+        description: 'Manual Tag override'
         default: 'manual-build'
       mapchete-ref:
-        description: 'mapchete ref'
+        description: 'mapchete branch/tag'
         default: 'main'
       mapchete-eo-ref:
-        description: 'mapchete-eo ref'
+        description: 'mapchete-eo branch/tag'
         default: 'main'
       mapchete-hub-ref:
-        description: 'mapchete-hub ref'
+        description: 'mapchete-hub branch/tag'
         default: 'main'
       mapchete-hub-cli-ref:
-        description: 'mapchete-hub-cli ref'
+        description: 'mapchete-hub-cli branch/tag'
         default: 'main'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.client_payload.source_repo || github.ref }}
+  cancel-in-progress: false
 
 jobs:
   mapchete:
     uses: ./.github/workflows/_image-factory.yml
     with:
       image-name: mapchete
-      # We pass the manual tag through the client_payload logic or handle it in the factory
+      image-tag: ${{ inputs.image-tag }}
       mapchete-ref: ${{ inputs.mapchete-ref }}
       mapchete-eo-ref: ${{ inputs.mapchete-eo-ref }}
       mapchete-hub-ref: ${{ inputs.mapchete-hub-ref }}
@@ -45,6 +46,7 @@ jobs:
     uses: ./.github/workflows/_image-factory.yml
     with:
       image-name: mhub-cli-light
+      image-tag: ${{ inputs.image-tag }}
       mapchete-ref: ${{ inputs.mapchete-ref }}
       mapchete-eo-ref: ${{ inputs.mapchete-eo-ref }}
       mapchete-hub-ref: ${{ inputs.mapchete-hub-ref }}
@@ -55,6 +57,7 @@ jobs:
     uses: ./.github/workflows/_image-factory.yml
     with:
       image-name: mhub-cli-full
+      image-tag: ${{ inputs.image-tag }}
       mapchete-ref: ${{ inputs.mapchete-ref }}
       mapchete-eo-ref: ${{ inputs.mapchete-eo-ref }}
       mapchete-hub-ref: ${{ inputs.mapchete-hub-ref }}

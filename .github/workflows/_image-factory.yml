@@ -172,18 +172,26 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/mapchete/${{ inputs.image-name }}
-          flavor: latest=false
+          flavor: |
+            latest=false
           tags: |
-            # 1. Explicit Manual Input Tag
+            # 1. Manual/Override (Highest priority)
             type=raw,value=${{ inputs.image-tag }},enable=${{ inputs.image-tag != '' }}
-            # 2. Year.Month.Counter for Version Dispatches
-            type=raw,value=${{ needs.prepare.outputs.calculated-tag }},enable=${{ needs.prepare.outputs.calculated-tag != '' }}
-            # 3. Source Repo Tag (Fallback for Tags or Non-Version Dispatches)
-            type=raw,value=${{ github.event.client_payload.image_tag }},enable=${{ github.event_name == 'repository_dispatch' && needs.prepare.outputs.calculated-tag == '' && github.event.client_payload.image_tag != '' }}
-            # 4. Standard ref and default logic
+            
+            # 2. Release Candidate (Only for version dispatches)
+            type=raw,value=rc-${{ needs.prepare.outputs.calculated-tag }},enable=${{ github.event_name == 'repository_dispatch' && github.event.client_payload.type == 'version' }}
+            
+            # 3. Final Release Tag (Applied on Merge to main OR manual Git Tag)
+            # This uses the calculated Year.Month.Counter when on main
+            type=raw,value=${{ needs.prepare.outputs.calculated-tag }},enable=${{ github.ref == 'refs/heads/main' && needs.prepare.outputs.calculated-tag != '' }}
             type=ref,event=tag
+            
+            # 4. Rolling Tags
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=dev,enable=${{ github.ref != 'refs/heads/main' }}
+            type=raw,value=dev,enable=${{ (github.event_name == 'repository_dispatch' && github.event.client_payload.type == 'dev') || github.ref != 'refs/heads/main' }}
+            
+            # 5. Standard PR numbering
+            type=ref,event=pr
 
       - id: push
         if: steps.image-fingerprint-check.outputs.changed == 'true'
@@ -202,17 +210,16 @@ jobs:
           github.event_name == 'repository_dispatch' && 
           github.event.client_payload.type == 'version'
         run: |
-          NEW_REF="${{ github.event.client_payload.image_tag }}"
           SOURCE="${{ github.event.client_payload.source_repo }}"
-          DATE=$(date +'%Y-%m-%d')
+          SOURCE_VER="${{ github.event.client_payload.image_tag }}"
           FINAL_VER="${{ needs.prepare.outputs.calculated-tag }}"
           
-          # Update versions.yml with the release tag
-          sed -i "s/^${SOURCE^^}_REF:.*/${SOURCE^^}_REF: $NEW_REF/" versions.yml
-
-          # Update CHANGELOG.md
+          # Update versions.yml
+          sed -i "s/^${SOURCE^^}_REF:.*/${SOURCE^^}_REF: $SOURCE_VER/" versions.yml
+          
+          # Initialize/Update CHANGELOG.md
           [[ ! -f CHANGELOG.md ]] && echo -e "# Changelog\n\n" > CHANGELOG.md
-          ENTRY="## [$FINAL_VER] - $DATE\n- Alignment: **$SOURCE** updated to \`$NEW_REF\`\n- Fingerprint: \`${{ steps.image-fingerprint-check.outputs.fingerprint }}\` \n"
+          ENTRY="## [$FINAL_VER] - RC\n- Proposed alignment: **$SOURCE** to \`$SOURCE_VER\`\n- Test Image: \`ghcr.io/mapchete/${{ inputs.image-name }}:rc-$FINAL_VER\`\n"
           sed -i "3i $ENTRY" CHANGELOG.md
 
       - name: Automated Version PR
@@ -223,20 +230,24 @@ jobs:
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.MAPCHETE_PAT || secrets.GITHUB_TOKEN }}
-          commit-message: "chore(release): bump ${{ inputs.image-name }} to ${{ needs.prepare.outputs.calculated-tag }}"
-          branch: "release/${{ inputs.image-name }}-${{ needs.prepare.outputs.calculated-tag }}"
-          title: "🚀 Release: ${{ inputs.image-name }} ${{ needs.prepare.outputs.calculated-tag }}"
+          commit-message: "rc: prepare release ${{ needs.prepare.outputs.calculated-tag }}"
+          branch: "rc/${{ inputs.image-name }}-${{ needs.prepare.outputs.calculated-tag }}"
+          title: "🧪 RC: ${{ inputs.image-name }} ${{ needs.prepare.outputs.calculated-tag }}"
           body: |
-            ### 📦 Automated Container Release
-            Aligned with source: `${{ github.event.client_payload.source_repo }}` @ `${{ github.event.client_payload.image_tag }}`
+            ### 🧪 Release Candidate Review
+            This PR proposes a new version alignment for `${{ inputs.image-name }}`.
             
-            **Release Version:** `${{ needs.prepare.outputs.calculated-tag }}`
-            **Fingerprint:** `${{ steps.image-fingerprint-check.outputs.fingerprint }}`
+            **Proposed Version:** `${{ needs.prepare.outputs.calculated-tag }}`
+            **Test Image:** `ghcr.io/mapchete/${{ inputs.image-name }}:rc-${{ needs.prepare.outputs.calculated-tag }}`
+            
+            **Changes:**
+            - Updates `versions.yml` to pull `${{ github.event.client_payload.source_repo }}` @ `${{ github.event.client_payload.image_tag }}`.
+            
+            **To Release:** Review the changes and merge this PR to `main`. The official tag will be applied upon merge.
           base: main
           delete-branch: true
           assignees: "scartography"
           reviewers: "ungarj"
-          labels: "automated-pr, release"
 
   cleanup-registry:
     needs: [prepare, build]
