@@ -93,29 +93,57 @@ jobs:
           git checkout ${{ steps.version.outputs.use_branch }}
 
       - id: resolve
+        name: Resolve Component References
         run: |
-          # Now that we've pivoted, 'versions.yml' is the one from the RC branch!
-          touch versions.yml 
-          
-          # Extract current refs from the file on the current branch
+          # 1. Read Current State from Disk (Pivoted Branch)
+          touch versions.yml
           M_CUR=$(grep '^MAPCHETE_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n' || echo "main")
           EO_CUR=$(grep '^MAPCHETE_EO_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n' || echo "main")
           HUB_CUR=$(grep '^MAPCHETE_HUB_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n' || echo "main")
           CLI_CUR=$(grep '^MAPCHETE_HUB_CLI_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n' || echo "main")
 
+          # 2. Extract Dispatch Details
           D_REPO="${{ github.event.client_payload.source_repo }}"
-          D_REF="${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}"
+          D_TAG="${{ github.event.client_payload.image_tag }}"
+          D_SHA="${{ github.event.client_payload.sha }}"
 
-          # Priority: Dispatch > Branch Current (Cumulative) > Main Default
-          [[ "$D_REPO" == "mapchete" ]] && M_F="$D_REF" || M_F="$M_CUR"
-          [[ "$D_REPO" == "mapchete-eo" ]] && EO_F="$D_REF" || EO_F="$EO_CUR"
-          [[ "$D_REPO" == "mapchete-hub" ]] && H_F="$D_REF" || H_F="$HUB_CUR"
-          [[ "$D_REPO" == "mapchete-hub-cli" ]] && C_F="$D_REF" || C_F="$CLI_CUR"
+          # Use SHA if tag is 'dev' or if tag is empty
+          if [[ "$D_TAG" == "dev" || -z "$D_TAG" ]]; then
+            D_REF="$D_SHA"
+          else
+            D_REF="$D_TAG"
+          fi
 
-          echo "mapchete=$M_F" >> $GITHUB_OUTPUT
-          echo "eo=$EO_F" >> $GITHUB_OUTPUT
-          echo "hub=$H_F" >> $GITHUB_OUTPUT
-          echo "cli=$C_F" >> $GITHUB_OUTPUT
+          # 3. Priority Resolution: Dispatch > Manual Input > Branch Current
+          # Mapchete
+          [[ "$D_REPO" == "mapchete" ]] && M_F="$D_REF" || M_F="${{ inputs.mapchete-ref }}"
+          [[ -z "$M_F" ]] && M_F="$M_CUR"
+
+          # Mapchete-EO
+          [[ "$D_REPO" == "mapchete-eo" ]] && EO_F="$D_REF" || EO_F="${{ inputs.mapchete-eo-ref }}"
+          [[ -z "$EO_F" ]] && EO_F="$EO_CUR"
+
+          # Mapchete-Hub
+          [[ "$D_REPO" == "mapchete-hub" ]] && H_F="$D_REF" || H_F="${{ inputs.mapchete-hub-ref }}"
+          [[ -z "$H_F" ]] && H_F="$HUB_CUR"
+
+          # Mapchete-Hub-CLI
+          [[ "$D_REPO" == "mapchete-hub-cli" ]] && C_F="$D_REF" || C_F="${{ inputs.mapchete-hub-cli-ref }}"
+          [[ -z "$C_F" ]] && C_F="$CLI_CUR"
+
+          # 4. Git Translation Layer
+          # 'latest' -> 'main' (Git doesn't know 'latest')
+          # 'dev' -> Dispatch SHA (We already handled this in step 2, but just in case of manual inputs:)
+          [[ "$M_F" == "latest" ]] && M_F="main"
+          [[ "$EO_F" == "latest" ]] && EO_F="main"
+          [[ "$H_F" == "latest" ]] && H_F="main"
+          [[ "$C_F" == "latest" ]] && C_F="main"
+
+          # 5. Output to GITHUB_OUTPUT
+          echo "mapchete=${M_F:-main}" >> $GITHUB_OUTPUT
+          echo "eo=${EO_F:-main}" >> $GITHUB_OUTPUT
+          echo "hub=${H_F:-main}" >> $GITHUB_OUTPUT
+          echo "cli=${C_F:-main}" >> $GITHUB_OUTPUT
 
       - name: Generate Summary
         if: always()
