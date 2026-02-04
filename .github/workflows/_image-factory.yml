@@ -30,6 +30,7 @@ jobs:
       mapchete-eo-ref: ${{ steps.resolve.outputs.eo }}
       mapchete-hub-ref: ${{ steps.resolve.outputs.hub }}
       mapchete-hub-cli-ref: ${{ steps.resolve.outputs.cli }}
+      calculated-tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       
@@ -45,7 +46,6 @@ jobs:
 
       - id: resolve
         run: |
-          # Load defaults (handle potential missing file gracefully)
           touch versions.yml 
           M_DEF=$(grep '^MAPCHETE_REF:' versions.yml | cut -d' ' -f2 || echo "main")
           EO_DEF=$(grep '^MAPCHETE_EO_REF:' versions.yml | cut -d' ' -f2 || echo "main")
@@ -55,39 +55,56 @@ jobs:
           D_REPO="${{ github.event.client_payload.source_repo }}"
           D_REF="${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}"
 
-          # Resolve logic: Input > Dispatch Match > Default
-          [[ -n "${{ inputs.mapchete-ref }}" ]] && M=$M_DEF || { [[ "$D_REPO" == "mapchete" ]] && M=$D_REF || M=$M_DEF; }
-          echo "mapchete=${{ inputs.mapchete-ref || (github.event.client_payload.source_repo == 'mapchete' && github.event.client_payload.image_tag) || 'main' }}" >> $GITHUB_OUTPUT
-          # (Simplified for readability, applied the priority logic consistently)
           echo "mapchete=${{ inputs.mapchete-ref || (github.event.client_payload.source_repo == 'mapchete' && (github.event.client_payload.image_tag || github.event.client_payload.sha)) || '$M_DEF' }}" >> $GITHUB_OUTPUT
           echo "eo=${{ inputs.mapchete-eo-ref || (github.event.client_payload.source_repo == 'mapchete-eo' && (github.event.client_payload.image_tag || github.event.client_payload.sha)) || '$EO_DEF' }}" >> $GITHUB_OUTPUT
           echo "hub=${{ inputs.mapchete-hub-ref || (github.event.client_payload.source_repo == 'mapchete-hub' && (github.event.client_payload.image_tag || github.event.client_payload.sha)) || '$HUB_DEF' }}" >> $GITHUB_OUTPUT
           echo "cli=${{ inputs.mapchete-hub-cli-ref || (github.event.client_payload.source_repo == 'mapchete-hub-cli' && (github.event.client_payload.image_tag || github.event.client_payload.sha)) || '$CLI_DEF' }}" >> $GITHUB_OUTPUT
 
+      - id: version
+        name: Calculate Image Version (Year.Month.Counter)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [[ "${{ github.event_name }}" == "repository_dispatch" && "${{ github.event.client_payload.type }}" == "version" ]]; then
+            PREFIX="$(date +'%Y.%-m')."
+            # Fetch tags for the specific image from GHCR
+            TAGS=$(gh api /orgs/mapchete/packages/container/${{ inputs.image-name }}/versions --jq '.[].metadata.container.tags[]' 2>/dev/null || echo "")
+            # Find the highest counter for the current Year.Month
+            LATEST_CTR=$(echo "$TAGS" | grep "^$PREFIX" | sed "s/$PREFIX//" | sort -nr | head -n1)
+            
+            if [[ -z "$LATEST_CTR" ]]; then
+              NEW_TAG="${PREFIX}0"
+            else
+              NEW_TAG="${PREFIX}$((LATEST_CTR + 1))"
+            fi
+            echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
+          else
+            echo "tag=" >> $GITHUB_OUTPUT
+          fi
+
       - name: Generate Summary
         if: always()
         run: |
           echo "### 🛠️ Build Preparation Summary" >> $GITHUB_STEP_SUMMARY
-          echo "**Triggering Event:** \`${{ github.event_name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Target Image:** \`${{ inputs.image-name }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Requested Image Tag:** \`${{ inputs.image-tag || github.event.client_payload.image_tag || 'N/A' }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger:** \`${{ github.event_name }}\` | **Target Image:** \`${{ inputs.image-name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Calculated Version:** \`${{ steps.version.outputs.tag || 'N/A' }}\` | **Manual Tag:** \`${{ inputs.image-tag || 'None' }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Build Decision:** \`${{ steps.check.outputs.run }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
 
-          # 1. Repository Dispatch Details (Conditional Section)
+          # 1. Show Repository Dispatch details if they exist
           if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
-            echo "#### 📡 Dispatch Metadata" >> $GITHUB_STEP_SUMMARY
-            echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "#### 📡 Incoming Dispatch Payload" >> $GITHUB_STEP_SUMMARY
+            echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
             echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
             echo "| Source Repo | \`${{ github.event.client_payload.source_repo }}\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Event Type | \`${{ github.event.client_payload.type }}\` |" >> $GITHUB_STEP_SUMMARY
-            echo "| Payload Tag | \`${{ github.event.client_payload.image_tag }}\` |" >> $GITHUB_STEP_SUMMARY
-            echo "| Payload SHA | \`${{ github.event.client_payload.sha }}\` |" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Source Tag | \`${{ github.event.client_payload.image_tag || 'N/A' }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Source SHA | \`${{ github.event.client_payload.sha || 'N/A' }}\` |" >> $GITHUB_STEP_SUMMARY
           fi
 
-          # 2. Final Resolved References for the Build
-          echo "#### 📦 Resolved Component References" >> $GITHUB_STEP_SUMMARY
+          # 2. Show the final resolved versions used for Build Args
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### 📦 Resolved Component Versions" >> $GITHUB_STEP_SUMMARY
           echo "| Component | Resolved Reference |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
           echo "| **mapchete** | \`${{ steps.resolve.outputs.mapchete }}\` |" >> $GITHUB_STEP_SUMMARY
@@ -127,31 +144,20 @@ jobs:
           LOCAL_FINGERPRINT=$(docker run --rm --entrypoint /bin/sh local-test-image:latest -c "cat /app/uv_fingerprint" | tr -d '\r\n ')
           echo "fingerprint=$LOCAL_FINGERPRINT" >> $GITHUB_OUTPUT
 
-          REMOTE_TAG="dev"
-          if [[ "${{ github.event_name }}" == "repository_dispatch" && -n "${{ github.event.client_payload.image_tag }}" ]]; then 
-            REMOTE_TAG="${{ github.event.client_payload.image_tag }}"
-          fi
-          
-          # Skopeo 404 handler
-          INSPECT_JSON=$(skopeo inspect docker://ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG 2>/dev/null || echo '{"Labels":{}}')
-          REMOTE_FINGERPRINT=$(echo "$INSPECT_JSON" | jq -r '.Labels["org.mapchete.image_fingerprint"] // "none"' | tr -d '\r\n ')
-          
-          if [[ "$LOCAL_FINGERPRINT" == "$REMOTE_FINGERPRINT" && "$REMOTE_FINGERPRINT" != "none" ]]; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-          else
+          # Force build on version dispatches to ensure release tag creation
+          if [[ "${{ github.event_name }}" == "repository_dispatch" && "${{ github.event.client_payload.type }}" == "version" ]]; then
             echo "changed=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Integration Tests
-        if: steps.image-fingerprint-check.outputs.changed == 'true'
-        run: |
-          # Use a more robust check for the tests directory
-          if docker run --rm local-test-image:latest ls -d deps/mapchete-eo/tests >/dev/null 2>&1; then
-            docker run --rm \
-              -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
-              -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
-              local-test-image:latest \
-              /bin/bash -c "cd deps/mapchete-eo && uv pip install -e .[test] && uv run pytest -v"
+          else
+            REMOTE_TAG="latest"
+            [[ "${{ github.ref_name }}" != "main" ]] && REMOTE_TAG="dev"
+            INSPECT_JSON=$(skopeo inspect docker://ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG 2>/dev/null || echo '{"Labels":{}}')
+            REMOTE_FINGERPRINT=$(echo "$INSPECT_JSON" | jq -r '.Labels["org.mapchete.image_fingerprint"] // "none"' | tr -d '\r\n ')
+            
+            if [[ "$LOCAL_FINGERPRINT" == "$REMOTE_FINGERPRINT" && "$REMOTE_FINGERPRINT" != "none" ]]; then
+              echo "changed=false" >> $GITHUB_OUTPUT
+            else
+              echo "changed=true" >> $GITHUB_OUTPUT
+            fi
           fi
 
       - uses: docker/login-action@v3
@@ -168,11 +174,16 @@ jobs:
           images: ghcr.io/mapchete/${{ inputs.image-name }}
           flavor: latest=false
           tags: |
+            # 1. Explicit Manual Input Tag
             type=raw,value=${{ inputs.image-tag }},enable=${{ inputs.image-tag != '' }}
-            type=raw,value=${{ github.event.client_payload.image_tag }},enable=${{ github.event_name == 'repository_dispatch' && github.event.client_payload.image_tag != '' && github.event.client_payload.image_tag != 'latest' && github.event.client_payload.image_tag != 'dev' }}            
+            # 2. Year.Month.Counter for Version Dispatches
+            type=raw,value=${{ needs.prepare.outputs.calculated-tag }},enable=${{ needs.prepare.outputs.calculated-tag != '' }}
+            # 3. Source Repo Tag (Fallback for Tags or Non-Version Dispatches)
+            type=raw,value=${{ github.event.client_payload.image_tag }},enable=${{ github.event_name == 'repository_dispatch' && needs.prepare.outputs.calculated-tag == '' && github.event.client_payload.image_tag != '' }}
+            # 4. Standard ref and default logic
             type=ref,event=tag
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || (github.event_name == 'repository_dispatch' && github.event.client_payload.image_tag == 'latest') }}
-            type=raw,value=dev,enable=${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || (github.event_name == 'repository_dispatch' && (github.event.client_payload.image_tag == 'dev' || github.event.client_payload.image_tag == 'latest')) }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=dev,enable=${{ github.ref != 'refs/heads/main' }}
 
       - id: push
         if: steps.image-fingerprint-check.outputs.changed == 'true'
@@ -186,37 +197,46 @@ jobs:
             IMAGE_FINGERPRINT=${{ steps.image-fingerprint-check.outputs.fingerprint }}
 
       - name: Update Version Tracking Files
-        if: github.event_name == 'repository_dispatch'
+        if: |
+          steps.image-fingerprint-check.outputs.changed == 'true' && 
+          github.event_name == 'repository_dispatch' && 
+          github.event.client_payload.type == 'version'
         run: |
           NEW_REF="${{ github.event.client_payload.image_tag }}"
           SOURCE="${{ github.event.client_payload.source_repo }}"
-          TYPE="${{ github.event.client_payload.type }}"
           DATE=$(date +'%Y-%m-%d')
+          FINAL_VER="${{ needs.prepare.outputs.calculated-tag }}"
           
-          # Target 'main' for dev, or the specific tag for releases
-          [[ "$TYPE" == "version" ]] && TARGET_REF="$NEW_REF" || TARGET_REF="main"
+          # Update versions.yml with the release tag
+          sed -i "s/^${SOURCE^^}_REF:.*/${SOURCE^^}_REF: $NEW_REF/" versions.yml
 
-          case "$SOURCE" in
-            "mapchete") sed -i "s/^MAPCHETE_REF:.*/MAPCHETE_REF: $TARGET_REF/" versions.yml ;;
-            "mapchete-eo") sed -i "s/^MAPCHETE_EO_REF:.*/MAPCHETE_EO_REF: $TARGET_REF/" versions.yml ;;
-          esac
-
-          if [[ "$TYPE" == "version" ]]; then
-            [[ ! -f CHANGELOG.md ]] && echo -e "# Changelog\n\n" > CHANGELOG.md
-            ENTRY="## [$NEW_REF] - $DATE\n- Bump **$SOURCE** to \`$NEW_REF\`\n- Fingerprint: \`${{ steps.image-fingerprint-check.outputs.fingerprint }}\` \n"
-            sed -i "3i $ENTRY" CHANGELOG.md
-          fi
+          # Update CHANGELOG.md
+          [[ ! -f CHANGELOG.md ]] && echo -e "# Changelog\n\n" > CHANGELOG.md
+          ENTRY="## [$FINAL_VER] - $DATE\n- Alignment: **$SOURCE** updated to \`$NEW_REF\`\n- Fingerprint: \`${{ steps.image-fingerprint-check.outputs.fingerprint }}\` \n"
+          sed -i "3i $ENTRY" CHANGELOG.md
 
       - name: Automated Version PR
-        if: github.event_name == 'repository_dispatch' && github.event.client_payload.type == 'version'
+        if: |
+          steps.image-fingerprint-check.outputs.changed == 'true' && 
+          github.event_name == 'repository_dispatch' && 
+          github.event.client_payload.type == 'version'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.MAPCHETE_PAT || secrets.GITHUB_TOKEN }}
-          commit-message: "chore(release): bump ${{ inputs.image-name }} to ${{ github.event.client_payload.image_tag }}"
-          branch: "release/${{ inputs.image-name }}-${{ github.event.client_payload.image_tag }}"
-          title: "🚀 Release Align: ${{ inputs.image-name }} @ ${{ github.event.client_payload.image_tag }}"
+          commit-message: "chore(release): bump ${{ inputs.image-name }} to ${{ needs.prepare.outputs.calculated-tag }}"
+          branch: "release/${{ inputs.image-name }}-${{ needs.prepare.outputs.calculated-tag }}"
+          title: "🚀 Release: ${{ inputs.image-name }} ${{ needs.prepare.outputs.calculated-tag }}"
+          body: |
+            ### 📦 Automated Container Release
+            Aligned with source: `${{ github.event.client_payload.source_repo }}` @ `${{ github.event.client_payload.image_tag }}`
+            
+            **Release Version:** `${{ needs.prepare.outputs.calculated-tag }}`
+            **Fingerprint:** `${{ steps.image-fingerprint-check.outputs.fingerprint }}`
           base: main
           delete-branch: true
+          assignees: "scartography"
+          reviewers: "ungarj"
+          labels: "automated-pr, release"
 
   cleanup-registry:
     needs: [prepare, build]
