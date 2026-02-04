@@ -105,7 +105,7 @@ jobs:
       - id: resolve
         name: Resolve Component References
         run: |
-          # 1. Read Current State from Disk (Pivoted Branch)
+          # 1. Read Current State from Disk
           touch versions.yml
           M_CUR=$(grep '^MAPCHETE_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n' || echo "main")
           EO_CUR=$(grep '^MAPCHETE_EO_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n' || echo "main")
@@ -117,43 +117,47 @@ jobs:
           D_TAG="${{ github.event.client_payload.image_tag }}"
           D_SHA="${{ github.event.client_payload.sha }}"
 
-          # Use SHA if tag is 'dev' or if tag is empty
           if [[ "$D_TAG" == "dev" || -z "$D_TAG" ]]; then
             D_REF="$D_SHA"
           else
             D_REF="$D_TAG"
           fi
 
-          # 3. Priority Resolution: Dispatch > Manual Input > Branch Current
-          # Mapchete
-          [[ "$D_REPO" == "mapchete" ]] && M_F="$D_REF" || M_F="${{ inputs.mapchete-ref }}"
-          [[ -z "$M_F" ]] && M_F="$M_CUR"
+          # 3. Helper function for Strict Priority Resolution
+          # Logic: Dispatch > Manual Input > Current versions.yml > Default 'main'
+          resolve_ref() {
+            local repo_name=$1
+            local manual_input=$2
+            local current_ref=$3
+            
+            if [[ "$D_REPO" == "$repo_name" && -n "$D_REF" ]]; then
+              echo "$D_REF"
+            elif [[ -n "$manual_input" && "$manual_input" != "null" ]]; then
+              echo "$manual_input"
+            elif [[ -n "$current_ref" && "$current_ref" != "main" ]]; then
+              echo "$current_ref"
+            else
+              echo "main"
+            fi
+          }
 
-          # Mapchete-EO
-          [[ "$D_REPO" == "mapchete-eo" ]] && EO_F="$D_REF" || EO_F="${{ inputs.mapchete-eo-ref }}"
-          [[ -z "$EO_F" ]] && EO_F="$EO_CUR"
+          # 4. Resolve each component cleanly
+          M_F=$(resolve_ref "mapchete" "${{ inputs.mapchete-ref }}" "$M_CUR")
+          EO_F=$(resolve_ref "mapchete-eo" "${{ inputs.mapchete-eo-ref }}" "$EO_CUR")
+          H_F=$(resolve_ref "mapchete-hub" "${{ inputs.mapchete-hub-ref }}" "$HUB_CUR")
+          C_F=$(resolve_ref "mapchete-hub-cli" "${{ inputs.mapchete-hub-cli-ref }}" "$CLI_CUR")
 
-          # Mapchete-Hub
-          [[ "$D_REPO" == "mapchete-hub" ]] && H_F="$D_REF" || H_F="${{ inputs.mapchete-hub-ref }}"
-          [[ -z "$H_F" ]] && H_F="$HUB_CUR"
-
-          # Mapchete-Hub-CLI
-          [[ "$D_REPO" == "mapchete-hub-cli" ]] && C_F="$D_REF" || C_F="${{ inputs.mapchete-hub-cli-ref }}"
-          [[ -z "$C_F" ]] && C_F="$CLI_CUR"
-
-          # 4. Git Translation Layer
-          # 'latest' -> 'main' (Git doesn't know 'latest')
-          # 'dev' -> Dispatch SHA (We already handled this in step 2, but just in case of manual inputs:)
+          # 5. Git Translation: Docker 'latest' -> Git 'main'
           [[ "$M_F" == "latest" ]] && M_F="main"
           [[ "$EO_F" == "latest" ]] && EO_F="main"
           [[ "$H_F" == "latest" ]] && H_F="main"
           [[ "$C_F" == "latest" ]] && C_F="main"
 
-          # 5. Output to GITHUB_OUTPUT
-          echo "mapchete=${M_F:-main}" >> $GITHUB_OUTPUT
-          echo "eo=${EO_F:-main}" >> $GITHUB_OUTPUT
-          echo "hub=${H_F:-main}" >> $GITHUB_OUTPUT
-          echo "cli=${C_F:-main}" >> $GITHUB_OUTPUT
+          # 6. Final Outputs (Ensure NO concatenation)
+          echo "mapchete=$M_F" >> $GITHUB_OUTPUT
+          echo "eo=$EO_F" >> $GITHUB_OUTPUT
+          echo "hub=$H_F" >> $GITHUB_OUTPUT
+          echo "cli=$C_F" >> $GITHUB_OUTPUT
 
       - name: Generate Summary
         if: always()
@@ -237,10 +241,10 @@ jobs:
           load: true
           tags: local-test-image:latest
           build-args: |
-            MAPCHETE_REF=${{ needs.prepare.outputs.mapchete-ref }}
-            MAPCHETE_EO_REF=${{ needs.prepare.outputs.mapchete-eo-ref }}
-            MAPCHETE_HUB_REF=${{ needs.prepare.outputs.mapchete-hub-ref }}
-            MAPCHETE_HUB_CLI_REF=${{ needs.prepare.outputs.mapchete-hub-cli-ref }}
+            MAPCHETE_REF=${{ steps.resolve.outputs.mapchete }}
+            MAPCHETE_EO_REF=${{ steps.resolve.outputs.eo }}
+            MAPCHETE_HUB_REF=${{ steps.resolve.outputs.hub }}
+            MAPCHETE_HUB_CLI_REF=${{ steps.resolve.outputs.cli }}
 
       - name: Image Fingerprint Check
         id: image-fingerprint-check
@@ -330,10 +334,10 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            MAPCHETE_REF=${{ needs.prepare.outputs.mapchete-ref }}
-            MAPCHETE_EO_REF=${{ needs.prepare.outputs.mapchete-eo-ref }}
-            MAPCHETE_HUB_REF=${{ needs.prepare.outputs.mapchete-hub-ref }}
-            MAPCHETE_HUB_CLI_REF=${{ needs.prepare.outputs.mapchete-hub-cli-ref }}
+            MAPCHETE_REF=${{ steps.resolve.outputs.mapchete }}
+            MAPCHETE_EO_REF=${{ steps.resolve.outputs.eo }}
+            MAPCHETE_HUB_REF=${{ steps.resolve.outputs.hub }}
+            MAPCHETE_HUB_CLI_REF=${{ steps.resolve.outputs.cli }}
             IMAGE_FINGERPRINT=${{ steps.image-fingerprint-check.outputs.fingerprint }}
 
       - name: Update Tracking
