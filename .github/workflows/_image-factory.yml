@@ -100,21 +100,30 @@ jobs:
 
       - id: resolve
         run: |
-          # This now reads the versions.yml from the RC branch if we switched
+          # 1. Ensure we are looking at the right file
           touch versions.yml 
-          M_DEF=$(grep '^MAPCHETE_REF:' versions.yml | cut -d' ' -f2 || echo "main")
-          EO_DEF=$(grep '^MAPCHETE_EO_REF:' versions.yml | cut -d' ' -f2 || echo "main")
-          HUB_DEF=$(grep '^MAPCHETE_HUB_REF:' versions.yml | cut -d' ' -f2 || echo "main")
-          CLI_DEF=$(grep '^MAPCHETE_HUB_CLI_REF:' versions.yml | cut -d' ' -f2 || echo "main")
+          
+          # 2. Extract current branch defaults
+          M_CUR=$(grep '^MAPCHETE_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n')
+          EO_CUR=$(grep '^MAPCHETE_EO_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n')
+          HUB_CUR=$(grep '^MAPCHETE_HUB_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n')
+          CLI_CUR=$(grep '^MAPCHETE_HUB_CLI_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n')
 
+          # 3. Resolve logic: Dispatch Override > Input Override > Branch Default
+          # This ensures the build respects the PR's state for repos NOT currently being dispatched
+          
           D_REPO="${{ github.event.client_payload.source_repo }}"
           D_REF="${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}"
 
-          # Logic: Input > Dispatch (if repo matches) > versions.yml (current branch)
-          echo "mapchete=${{ inputs.mapchete-ref || (github.event.client_payload.source_repo == 'mapchete' && (github.event.client_payload.image_tag || github.event.client_payload.sha)) || '$M_DEF' }}" >> $GITHUB_OUTPUT
-          echo "eo=${{ inputs.mapchete-eo-ref || (github.event.client_payload.source_repo == 'mapchete-eo' && (github.event.client_payload.image_tag || github.event.client_payload.sha)) || '$EO_DEF' }}" >> $GITHUB_OUTPUT
-          echo "hub=${{ inputs.mapchete-hub-ref || (github.event.client_payload.source_repo == 'mapchete-hub' && (github.event.client_payload.image_tag || github.event.client_payload.sha)) || '$HUB_DEF' }}" >> $GITHUB_OUTPUT
-          echo "cli=${{ inputs.mapchete-hub-cli-ref || (github.event.client_payload.source_repo == 'mapchete-hub-cli' && (github.event.client_payload.image_tag || github.event.client_payload.sha)) || '$CLI_DEF' }}" >> $GITHUB_OUTPUT
+          [[ "$D_REPO" == "mapchete" ]] && M_REF="$D_REF" || M_REF="${{ inputs.mapchete-ref || '$M_CUR' }}"
+          [[ "$D_REPO" == "mapchete-eo" ]] && EO_REF="$D_REF" || EO_REF="${{ inputs.mapchete-eo-ref || '$EO_CUR' }}"
+          [[ "$D_REPO" == "mapchete-hub" ]] && HUB_REF="$D_REF" || HUB_REF="${{ inputs.mapchete-hub-ref || '$HUB_CUR' }}"
+          [[ "$D_REPO" == "mapchete-hub-cli" ]] && CLI_REF="$D_REF" || CLI_REF="${{ inputs.mapchete-hub-cli-ref || '$CLI_CUR' }}"
+
+          echo "mapchete=${M_REF:-main}" >> $GITHUB_OUTPUT
+          echo "eo=${EO_REF:-main}" >> $GITHUB_OUTPUT
+          echo "hub=${HUB_REF:-main}" >> $GITHUB_OUTPUT
+          echo "cli=${CLI_REF:-main}" >> $GITHUB_OUTPUT
 
       - name: Generate Summary
         if: always()
@@ -188,9 +197,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # This ensures we work on the existing RC branch if one was found
           ref: ${{ needs.prepare.outputs.use_branch }}
-          fetch-depth: 0
 
       - name: Build Local Image
         uses: docker/build-push-action@v5
