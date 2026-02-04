@@ -88,20 +88,27 @@ jobs:
       - id: resolve
         name: Resolve Component References
         run: |
-          touch versions.yml
-          # 1. Detect Mode and Track
+          # 1. Identify Track based on Mode
           MODE="${{ steps.version.outputs.mode }}"
           if [[ "$MODE" == "rc" || "$MODE" == "release" ]]; then
             TRACK="_RELEASE"
           else
             TRACK="_ROLLING"
           fi
-          echo "🎯 Resolution Track: $TRACK"
 
-          # 2. Extract ALL current values from disk
-          # We use a helper that handles the specific track requested
-          get_cur() { grep "^$1:" versions.yml | head -n 1 | awk '{print $2}' | tr -d '\r\n ' || echo "main"; }
+          # 2. Extract Current Values from versions.yml
+          # Using -F for fixed string and ensuring we match the start of the line
+          get_cur() { 
+            # Search for "KEY_NAME:" and get the second column
+            local val=$(grep "^$1:" versions.yml | awk '{print $2}' | tr -d '\r\n ' || echo "")
+            if [[ -z "$val" ]]; then
+              echo "main" # Final safety fallback
+            else
+              echo "$val"
+            fi
+          }
 
+          # Resolve based on the exact key names in your file
           M_CUR=$(get_cur "MAPCHETE_REF${TRACK}")
           EO_CUR=$(get_cur "MAPCHETE_EO_REF${TRACK}")
           HUB_CUR=$(get_cur "MAPCHETE_HUB_REF${TRACK}")
@@ -113,32 +120,24 @@ jobs:
           D_SHA="${{ github.event.client_payload.sha }}"
           [[ "$D_TAG" == "dev" || -z "$D_TAG" ]] && D_REF="$D_SHA" || D_REF="$D_TAG"
 
-          # 4. Strict Priority: Dispatch > Manual > Track Current
+          # 4. Priority Function
           resolve_ref() {
-            local repo_name=$1
-            local manual_input=$2
-            local current_track_val=$3
-            
-            if [[ "$D_REPO" == "$repo_name" && -n "$D_REF" ]]; then
+            local manual="${2}"
+            if [[ "$D_REPO" == "$1" && -n "$D_REF" ]]; then
               echo "$D_REF"
-            elif [[ -n "$manual_input" && "$manual_input" != "null" && "$manual_input" != "" ]]; then
-              echo "$manual_input"
+            elif [[ -n "$manual" && "$manual" != "null" ]]; then
+              echo "$manual"
             else
-              # FALLBACK: Use the version already pinned in the current track
-              echo "$current_track_val"
+              echo "$3" # Fallback to the CUR value we found in the file
             fi
           }
 
-          # 5. Execute Resolution
           M_F=$(resolve_ref "mapchete" "${{ inputs.mapchete-ref }}" "$M_CUR")
           EO_F=$(resolve_ref "mapchete-eo" "${{ inputs.mapchete-eo-ref }}" "$EO_CUR")
           H_F=$(resolve_ref "mapchete-hub" "${{ inputs.mapchete-hub-ref }}" "$HUB_CUR")
           C_F=$(resolve_ref "mapchete-hub-cli" "${{ inputs.mapchete-hub-cli-ref }}" "$CLI_CUR")
 
-          # 6. Normalize and Output
-          [[ "$M_F" == "latest" ]] && M_F="main"; [[ "$EO_F" == "latest" ]] && EO_F="main"
-          [[ "$H_F" == "latest" ]] && H_F="main"; [[ "$C_F" == "latest" ]] && C_F="main"
-
+          # 5. Export
           echo "mapchete=$M_F" >> $GITHUB_OUTPUT
           echo "eo=$EO_F" >> $GITHUB_OUTPUT
           echo "hub=$H_F" >> $GITHUB_OUTPUT
