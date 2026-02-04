@@ -245,36 +245,40 @@ jobs:
       - name: Image Fingerprint Check
         id: image-fingerprint-check
         run: |
-          # 1. Extract local fingerprint from the just-built image
+          # 1. Get Local Fingerprint from the image we just built
           LOCAL_FP=$(docker run --rm --entrypoint /bin/sh local-test-image:latest -c "cat /app/uv_fingerprint" | tr -d '\r\n ')
           echo "fingerprint=$LOCAL_FP" >> $GITHUB_OUTPUT
 
-          # 2. Determine the most relevant remote tag for comparison
+          # 2. Identify Remote Target
           MODE="${{ needs.prepare.outputs.mode }}"
           VER="${{ needs.prepare.outputs.calculated-tag }}"
+          if [[ "$MODE" == "rc" ]]; then REMOTE_TAG="rc-$VER"
+          elif [[ "$MODE" == "release" ]]; then REMOTE_TAG="$VER"
+          elif [[ "${{ github.ref_name }}" == "main" ]]; then REMOTE_TAG="latest"
+          else REMOTE_TAG="dev"; fi
           
-          if [[ "$MODE" == "rc" ]]; then
-            REMOTE_TAG="rc-$VER"
-          elif [[ "$MODE" == "release" ]]; then
-            REMOTE_TAG="$VER"
-          elif [[ "${{ github.ref_name }}" == "main" ]]; then
-            REMOTE_TAG="latest"
-          else
-            REMOTE_TAG="dev"
-          fi
+          REMOTE_IMAGE="ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG"
 
-          echo "🔍 Mode: $MODE | Comparing local against: ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG"
-
-          # 3. Perform the comparison
-          # We use skopeo to peek at the remote labels without pulling the whole image
-          INSPECT_JSON=$(skopeo inspect docker://ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG 2>/dev/null || echo '{"Labels":{}}')
+          # 3. Check Fingerprint via Skopeo
+          INSPECT_JSON=$(skopeo inspect docker://$REMOTE_IMAGE 2>/dev/null || echo '{"Labels":{}}')
           REMOTE_FP=$(echo "$INSPECT_JSON" | jq -r '.Labels["org.mapchete.image_fingerprint"] // "none"' | tr -d '\r\n ')
 
           if [[ "$LOCAL_FP" == "$REMOTE_FP" ]]; then
-            echo "✅ Fingerprint Match: The remote image is already up-to-date."
+            echo "✅ Fingerprint Match. Extracting live package versions from remote."
             echo "changed=false" >> $GITHUB_OUTPUT
+            
+            # Pull the remote image to inspect internal state
+            docker pull $REMOTE_IMAGE
+            
+            # Helper function to extract version from uv pip list
+            get_ver() { docker run --rm $REMOTE_IMAGE uv pip list | grep "$1" | awk '{print $2}' | tr -d '\r\n'; }
+
+            echo "m_ref=$(get_ver mapchete)" >> $GITHUB_OUTPUT
+            echo "eo_ref=$(get_ver mapchete-eo)" >> $GITHUB_OUTPUT
+            echo "hub_ref=$(get_ver mapchete-hub)" >> $GITHUB_OUTPUT
+            echo "cli_ref=$(get_ver mapchete-hub-cli)" >> $GITHUB_OUTPUT
           else
-            echo "⚠️ Fingerprint Mismatch: Code or environment has changed."
+            echo "⚠️ Fingerprint Mismatch. Build required."
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
@@ -335,53 +339,72 @@ jobs:
       - name: Update Tracking
         if: needs.prepare.outputs.mode == 'rc'
         run: |
+          # 1. Setup Variables & Export Date
+          PUSH_DATE=$(date +'%Y-%m-%d')
+          echo "PUSH_DATE=$PUSH_DATE" >> $GITHUB_ENV
+          
           SOURCE="${{ github.event.client_payload.source_repo }}"
-          # Use SHA for 'dev' builds, otherwise use the tag
+          # Select version: SHA for dev/empty, Tag for version dispatches
           D_TAG="${{ github.event.client_payload.image_tag }}"
           D_SHA="${{ github.event.client_payload.sha }}"
           [[ "$D_TAG" == "dev" || -z "$D_TAG" ]] && SOURCE_VER="$D_SHA" || SOURCE_VER="$D_TAG"
           
           FINAL_VER="${{ needs.prepare.outputs.calculated-tag }}"
-          PUSH_DATE=$(date +'%Y-%m-%d')
           
-          # 1. Update versions.yml
+          # 2. Update versions.yml
           KEY_NAME=$(echo "${SOURCE//-/_}_REF" | tr '[:lower:]' '[:upper:]')
-          if grep -q "^${KEY_NAME}:" versions.yml; then
-            sed -i "s|^${KEY_NAME}:.*|${KEY_NAME}: $SOURCE_VER|" versions.yml
-          else
-            echo "${KEY_NAME}: $SOURCE_VER" >> versions.yml
-          fi
-          
-          # 2. Update CHANGELOG.rst
-          # Search for the version at the start of the line
+          sed -i "/^${KEY_NAME}:/d" versions.yml
+          echo "${KEY_NAME}: $SOURCE_VER" >> versions.yml
+
+          # 3. Update CHANGELOG.rst (Surgical Deduplication)
           if grep -q "^${FINAL_VER}" CHANGELOG.rst; then
             echo "Updating existing block for $FINAL_VER"
             
-            # Find the header line number
-            LINE_NUM=$(grep -n "^${FINAL_VER}" CHANGELOG.rst | head -n 1 | cut -d: -f1)
+            # Find the version block boundaries
+            START_LN=$(grep -n "^${FINAL_VER}" CHANGELOG.rst | head -n 1 | cut -d: -f1)
+            END_LN=$(tail -n +$((START_LN + 1)) CHANGELOG.rst | grep -n -m 1 "^[0-9]" | cut -d: -f1)
             
-            # OPTIONAL: Update the date in the existing header to today's date
+            if [ -z "$END_LN" ]; then
+                END_LN=$(wc -l < CHANGELOG.rst)
+            else
+                END_LN=$((START_LN + END_LN - 1))
+            fi
+
+            # Extract, Clean, and Update the block
+            sed -n "${START_LN},${END_LN}p" CHANGELOG.rst > block.tmp
+            # Filter out any existing lines for this component
+            grep -v "\*\*${SOURCE}\*\*" block.tmp | grep -v "Aligned with \*\*${SOURCE}\*\*" > block_clean.tmp
+            
+            # Insert the new bullet (NO trailing dot)
+            sed -i "4i * Aligned **${SOURCE}** to \`${SOURCE_VER}\`" block_clean.tmp
+            
+            # Reassemble file
+            head -n $((START_LN - 1)) CHANGELOG.rst > changelog.new
+            cat block_clean.tmp >> changelog.new
+            tail -n +$((END_LN + 1)) CHANGELOG.rst >> changelog.new
+            mv changelog.new CHANGELOG.rst
+            
+            # Standardize Header Date & Underline
             TITLE="${FINAL_VER} - ${PUSH_DATE}"
             LEN=${#TITLE}
             UNDERLINE=$(printf '%0.s-' $(seq 1 $LEN))
-            sed -i "${LINE_NUM}s|.*|${TITLE}|" CHANGELOG.rst
-            sed -i "$((LINE_NUM + 1))s|.*|${UNDERLINE}|" CHANGELOG.rst
-
-            # Deduplicate: Remove existing bullet for this source
-            sed -i "/^${FINAL_VER}/,/^$/ { /\*\*${SOURCE}\*\*/d; }" CHANGELOG.rst
+            sed -i "${START_LN}s|.*|${TITLE}|" CHANGELOG.rst
+            sed -i "$((START_LN + 1))s|.*|${UNDERLINE}|" CHANGELOG.rst
             
-            # Insert the fresh bullet 3 lines after the header
-            sed -i "$((LINE_NUM + 3))i * Aligned **${SOURCE}** to \`${SOURCE_VER}\`." CHANGELOG.rst
           else
             echo "Creating brand new version block"
             TITLE="${FINAL_VER} - ${PUSH_DATE}"
             LEN=${#TITLE}
             UNDERLINE=$(printf '%0.s-' $(seq 1 $LEN))
-            BLOCK="${TITLE}\n${UNDERLINE}\n\n* Aligned **${SOURCE}** to \`${SOURCE_VER}\`.\n"
-            
-            # Insert at line 4 (below main 'Changelog' title)
+            # NO trailing dot in the block template
+            BLOCK="${TITLE}\n${UNDERLINE}\n\n* Aligned **${SOURCE}** to \`${SOURCE_VER}\`\n"
             sed -i "4i ${BLOCK}" CHANGELOG.rst
           fi
+
+          # Final Sanity Clean
+          sed -i 's/[[:space:]]*$//' CHANGELOG.rst
+          echo "--- Resulting Changelog Snippet ---"
+          head -n 15 CHANGELOG.rst
 
       - name: Automated Version PR
         if: needs.prepare.outputs.mode == 'rc'
@@ -390,24 +413,29 @@ jobs:
           token: ${{ secrets.MAPCHETE_PAT || secrets.GITHUB_TOKEN }}
           commit-message: "rc: align ${{ github.event.client_payload.source_repo }} to ${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}"
           branch: "rc/${{ inputs.image-name }}-${{ needs.prepare.outputs.calculated-tag }}"
-          # CRITICAL: add these to ensure the files are actually updated in the repo
           add-paths: |
             versions.yml
             CHANGELOG.rst
           title: "🧪 RC: ${{ inputs.image-name }} ${{ needs.prepare.outputs.calculated-tag }}"
           body: |
             ### 🧪 Release Candidate Update
-            This PR tracks the alignment for version `${{ needs.prepare.outputs.calculated-tag }}`.
+            This PR tracks the component alignment for version `${{ needs.prepare.outputs.calculated-tag }}`.
 
-            #### 📦 Component Status
+            **Build Status:** ${{ steps.image-fingerprint-check.outputs.changed == 'true' && '🚀 New Image Pushed' || '✅ Fingerprint Match - Reusing Existing Image' }}
+            **Push Date:** `${{ env.PUSH_DATE }}`
+
+            #### 📦 Live Component Alignment
             | Component | Reference |
             | :--- | :--- |
-            | **mapchete** | `${{ needs.prepare.outputs.mapchete-ref }}` |
-            | **mapchete-eo** | `${{ needs.prepare.outputs.mapchete-eo-ref }}` |
-            | **mapchete-hub** | `${{ needs.prepare.outputs.mapchete-hub-ref }}` |
-            | **mapchete-hub-cli** | `${{ needs.prepare.outputs.mapchete-hub-cli-ref }}` |
+            | **mapchete** | `${{ steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mapchete-ref || steps.image-fingerprint-check.outputs.m_ref }}` |
+            | **mapchete-eo** | `${{ steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mapchete-eo-ref || steps.image-fingerprint-check.outputs.eo_ref }}` |
+            | **mapchete-hub** | `${{ steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mapchete-hub-ref || steps.image-fingerprint-check.outputs.hub_ref }}` |
+            | **mapchete-hub-cli** | `${{ steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mapchete-hub-cli-ref || steps.image-fingerprint-check.outputs.cli_ref }}` |
+
+            > **Note:** These versions are synced with the Docker image at `ghcr.io/mapchete/${{ inputs.image-name }}:rc-${{ needs.prepare.outputs.calculated-tag }}`.
             
-            **Latest Alignment:** `${{ github.event.client_payload.source_repo }}` → `${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}`
+            ---
+            *Latest Update Triggered by:* **${{ github.event.client_payload.source_repo }}**
           base: main
           delete-branch: true
           assignees: "scartography"
