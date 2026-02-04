@@ -249,7 +249,7 @@ jobs:
       - name: Image Fingerprint Check
         id: image-fingerprint-check
         run: |
-          # 1. Get Local Fingerprint from the image we just built
+          # 1. Get Local Fingerprint
           LOCAL_FP=$(docker run --rm --entrypoint /bin/sh local-test-image:latest -c "cat /app/uv_fingerprint" | tr -d '\r\n ')
           echo "fingerprint=$LOCAL_FP" >> $GITHUB_OUTPUT
 
@@ -268,19 +268,20 @@ jobs:
           REMOTE_FP=$(echo "$INSPECT_JSON" | jq -r '.Labels["org.mapchete.image_fingerprint"] // "none"' | tr -d '\r\n ')
 
           if [[ "$LOCAL_FP" == "$REMOTE_FP" ]]; then
-            echo "✅ Fingerprint Match. Extracting live package versions from remote."
+            echo "✅ Fingerprint Match. Image is up to date."
             echo "changed=false" >> $GITHUB_OUTPUT
             
-            # Pull the remote image to inspect internal state
-            docker pull $REMOTE_IMAGE
-            
-            # Helper function to extract version from uv pip list
-            get_ver() { docker run --rm $REMOTE_IMAGE uv pip list | grep "$1" | awk '{print $2}' | tr -d '\r\n'; }
+            # 4. ONLY fetch internal versions if we are in RC mode
+            if [[ "$MODE" == "rc" ]]; then
+              echo "RC Mode: Extracting live package versions from remote."
+              docker pull $REMOTE_IMAGE
+              get_ver() { docker run --rm $REMOTE_IMAGE uv pip list | grep "^$1 " | awk '{print $2}' | tr -d '\r\n' || echo "N/A"; }
 
-            echo "m_ref=$(get_ver mapchete)" >> $GITHUB_OUTPUT
-            echo "eo_ref=$(get_ver mapchete-eo)" >> $GITHUB_OUTPUT
-            echo "hub_ref=$(get_ver mapchete-hub)" >> $GITHUB_OUTPUT
-            echo "cli_ref=$(get_ver mapchete-hub-cli)" >> $GITHUB_OUTPUT
+              echo "m_ref=$(get_ver mapchete)" >> $GITHUB_OUTPUT
+              echo "eo_ref=$(get_ver mapchete-eo)" >> $GITHUB_OUTPUT
+              echo "hub_ref=$(get_ver mapchete-hub)" >> $GITHUB_OUTPUT
+              echo "cli_ref=$(get_ver mapchete-hub-cli)" >> $GITHUB_OUTPUT
+            fi
           else
             echo "⚠️ Fingerprint Mismatch. Build required."
             echo "changed=true" >> $GITHUB_OUTPUT
