@@ -280,28 +280,32 @@ jobs:
           SOURCE="${{ github.event.client_payload.source_repo }}"
           SOURCE_VER="${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}"
           FINAL_VER="${{ needs.prepare.outputs.calculated-tag }}"
+          PUSH_DATE=$(date +'%Y-%m-%d')
           
           # 1. Update versions.yml
           KEY_NAME=$(echo "${SOURCE//-/_}_REF" | tr '[:lower:]' '[:upper:]')
           sed -i "s|^${KEY_NAME}:.*|${KEY_NAME}: $SOURCE_VER|" versions.yml
           
           # 2. Update CHANGELOG.rst
-          if grep -q "^${FINAL_VER}$" CHANGELOG.rst; then
+          # Look for the version string at the start of a line
+          if grep -q "^${FINAL_VER}" CHANGELOG.rst; then
             echo "Appending bullet to existing block for $FINAL_VER"
-            # This finds the line with the version, moves down 3 lines, and appends the bullet
-            # Using a simpler sed approach:
-            sed -i "/^${FINAL_VER}$/,/*/{ /*/i * Aligned **${SOURCE}** to \`${SOURCE_VER}\`." -e '}' CHANGELOG.rst || \
-            sed -i "/^${FINAL_VER}$/a * Aligned **${SOURCE}** to \`${SOURCE_VER}\`." CHANGELOG.rst
-            
-            # If the above is still finicky, this is the bulletproof version:
-            # Find the underline (line after version) and append after it + 1 newline
-            sed -i "/^${FINAL_VER}$/{n;a * Aligned **${SOURCE}** to \`${SOURCE_VER}\`." -e '}' CHANGELOG.rst
+            # Find the line number of the version header
+            LINE_NUM=$(grep -n "^${FINAL_VER}" CHANGELOG.rst | head -n 1 | cut -d: -f1)
+            # Insert the bullet 3 lines after the header (Header, Underline, Newline, HERE)
+            # This logic avoids the 'sed unexpected }' error entirely
+            sed -i "$((LINE_NUM + 3))i * Aligned **${SOURCE}** to \`${SOURCE_VER}\`." CHANGELOG.rst
           else
             echo "Creating new version block for $FINAL_VER"
-            LEN=${#FINAL_VER}
+            TITLE="${FINAL_VER} - ${PUSH_DATE}"
+            LEN=${#TITLE}
             UNDERLINE=$(printf '%0.s-' $(seq 1 $LEN))
-            # Prepend the header at line 4
-            sed -i "4i ${FINAL_VER}\n${UNDERLINE}\n\n* Aligned **${SOURCE}** to \`${SOURCE_VER}\`.\n" CHANGELOG.rst
+            
+            # Format according to your structure: Title, Underline, Blank, Bullet
+            BLOCK="${TITLE}\n${UNDERLINE}\n\n* Aligned **${SOURCE}** to \`${SOURCE_VER}\`.\n"
+            
+            # Insert at line 4 (below the 'Changelog' main header)
+            sed -i "4i ${BLOCK}" CHANGELOG.rst
           fi
 
       - name: Automated Version PR
