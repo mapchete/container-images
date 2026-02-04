@@ -257,7 +257,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: meta
-        if: steps.image-fingerprint-check.outputs.changed == 'true'
+        if: steps.image-fingerprint-check.outputs.changed == 'true' || needs.prepare.outputs.mode == 'rc'
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/mapchete/${{ inputs.image-name }}
