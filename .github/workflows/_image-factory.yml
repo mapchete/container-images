@@ -65,24 +65,46 @@ jobs:
         run: |
           EVENT="${{ github.event_name }}"
           P_TYPE="${{ github.event.client_payload.type }}"
+          P_TAG="${{ github.event.client_payload.image_tag }}"
           PREFIX="$(date +'%Y.%-m')."
           
-          # Check if there is an existing RC branch for this month
-          EXISTING_RC_BRANCH=$(git branch -r | grep "origin/rc/${{ inputs.image-name }}-$PREFIX" | head -n 1 | sed 's/.*rc\///' || echo "")
+          # 1. FINAL RELEASE: Manual Git Tag on container-images repo
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "mode=release" >> $GITHUB_OUTPUT
+            echo "target_latest=true" >> $GITHUB_OUTPUT
 
-          if [[ -n "$EXISTING_RC_BRANCH" && "$P_TYPE" == "version" ]]; then
-            # Reuse existing version from the branch name
-            NEW_TAG="$EXISTING_RC_BRANCH"
-            echo "mode=rc" >> $GITHUB_OUTPUT
-          elif [[ "$P_TYPE" == "version" ]]; then
-            # Standard increment logic
-            TAGS=$(gh api /orgs/mapchete/packages/container/${{ inputs.image-name }}/versions --jq '.[].metadata.container.tags[]' 2>/dev/null || echo "")
-            LATEST_CTR=$(echo "$TAGS" | grep "^$PREFIX" | sed "s/$PREFIX//" | sort -nr | head -n1)
-            [[ -z "$LATEST_CTR" ]] && NEW_TAG="${PREFIX}0" || NEW_TAG="${PREFIX}$((LATEST_CTR + 1))"
-            echo "mode=rc" >> $GITHUB_OUTPUT
-          # ... [rest of your logic for rolling/release] ...
-          
-          echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
+          # 2. ROLLING: Dispatch requested 'latest' or 'dev' specifically
+          elif [[ "$EVENT" == "repository_dispatch" && "$P_TAG" =~ ^(latest|dev)$ ]]; then
+            echo "tag=$P_TAG" >> $GITHUB_OUTPUT
+            echo "mode=rolling" >> $GITHUB_OUTPUT
+            [[ "$P_TAG" == "latest" ]] && echo "target_latest=true" >> $GITHUB_OUTPUT || echo "target_latest=false" >> $GITHUB_OUTPUT
+
+          # 3. RELEASE CANDIDATE (RC) logic: Version Dispatch or Manual run (no tag)
+          elif [[ "$P_TYPE" == "version" ]] || [[ "$EVENT" == "workflow_dispatch" && -z "${{ inputs.image-tag }}" ]]; then
+            # Check if an RC branch for this month already exists to avoid double-bumping
+            # We fetch to ensure we see remote branches
+            git fetch origin
+            EXISTING_RC_BRANCH=$(git branch -r | grep "origin/rc/${{ inputs.image-name }}-$PREFIX" | head -n 1 | sed 's/.*rc\///' || echo "")
+            
+            if [[ -n "$EXISTING_RC_BRANCH" ]]; then
+              echo "tag=$EXISTING_RC_BRANCH" >> $GITHUB_OUTPUT
+              echo "mode=rc" >> $GITHUB_OUTPUT
+            else
+              TAGS=$(gh api /orgs/mapchete/packages/container/${{ inputs.image-name }}/versions --jq '.[].metadata.container.tags[]' 2>/dev/null || echo "")
+              LATEST_CTR=$(echo "$TAGS" | grep "^$PREFIX" | sed "s/$PREFIX//" | sort -nr | head -n1)
+              [[ -z "$LATEST_CTR" ]] && NEW_TAG="${PREFIX}0" || NEW_TAG="${PREFIX}$((LATEST_CTR + 1))"
+              echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
+              echo "mode=rc" >> $GITHUB_OUTPUT
+            fi
+            echo "target_latest=true" >> $GITHUB_OUTPUT
+            
+          else
+            # 4. DEFAULT/FALLBACK: Standard rolling dev
+            echo "tag=dev" >> $GITHUB_OUTPUT
+            echo "mode=rolling" >> $GITHUB_OUTPUT
+            echo "target_latest=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Generate Summary
         if: always()
