@@ -32,9 +32,13 @@ jobs:
       mapchete-hub-cli-ref: ${{ steps.resolve.outputs.cli }}
       calculated-tag: ${{ steps.version.outputs.tag }}
       mode: ${{ steps.version.outputs.mode }}
+      use_branch: ${{ steps.version.outputs.use_branch }}
+      target_latest: ${{ steps.version.outputs.target_latest }}
     steps:
       - uses: actions/checkout@v4
-      
+        with:
+          fetch-depth: 0
+
       - id: check
         run: |
           if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
@@ -45,21 +49,8 @@ jobs:
             else echo "run=false" >> $GITHUB_OUTPUT; fi
           else echo "run=true" >> $GITHUB_OUTPUT; fi
 
-      - id: resolve
-        run: |
-          touch versions.yml 
-          M_DEF=$(grep '^MAPCHETE_REF:' versions.yml | cut -d' ' -f2 || echo "main")
-          EO_DEF=$(grep '^MAPCHETE_EO_REF:' versions.yml | cut -d' ' -f2 || echo "main")
-          HUB_DEF=$(grep '^MAPCHETE_HUB_REF:' versions.yml | cut -d' ' -f2 || echo "main")
-          CLI_DEF=$(grep '^MAPCHETE_HUB_CLI_REF:' versions.yml | cut -d' ' -f2 || echo "main")
-
-          echo "mapchete=${{ inputs.mapchete-ref || (github.event.client_payload.source_repo == 'mapchete' && (github.event.client_payload.image_tag || github.event.client_payload.sha)) || '$M_DEF' }}" >> $GITHUB_OUTPUT
-          echo "eo=${{ inputs.mapchete-eo-ref || (github.event.client_payload.source_repo == 'mapchete-eo' && (github.event.client_payload.image_tag || github.event.client_payload.sha)) || '$EO_DEF' }}" >> $GITHUB_OUTPUT
-          echo "hub=${{ inputs.mapchete-hub-ref || (github.event.client_payload.source_repo == 'mapchete-hub' && (github.event.client_payload.image_tag || github.event.client_payload.sha)) || '$HUB_DEF' }}" >> $GITHUB_OUTPUT
-          echo "cli=${{ inputs.mapchete-hub-cli-ref || (github.event.client_payload.source_repo == 'mapchete-hub-cli' && (github.event.client_payload.image_tag || github.event.client_payload.sha)) || '$CLI_DEF' }}" >> $GITHUB_OUTPUT
-
       - id: version
-        name: Calculate Image Tag and Mode
+        name: Detect Mode and Target Branch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -68,47 +59,62 @@ jobs:
           P_TAG="${{ github.event.client_payload.image_tag }}"
           PREFIX="$(date +'%Y.%-m')."
           
-          # Default branch is always the current ref (main or tag)
+          # Default state
           USE_BRANCH="${{ github.ref_name }}"
+          MODE="rolling"
           TARGET_LATEST="false"
 
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-            echo "mode=release" >> $GITHUB_OUTPUT
+            TAG_NAME="${{ github.ref_name }}"
+            MODE="release"
             TARGET_LATEST="true"
-
           elif [[ "$EVENT" == "repository_dispatch" && "$P_TAG" =~ ^(latest|dev)$ ]]; then
-            echo "tag=$P_TAG" >> $GITHUB_OUTPUT
-            echo "mode=rolling" >> $GITHUB_OUTPUT
+            TAG_NAME="$P_TAG"
             [[ "$P_TAG" == "latest" ]] && TARGET_LATEST="true"
-
           elif [[ "$P_TYPE" == "version" ]] || [[ "$EVENT" == "workflow_dispatch" && -z "${{ inputs.image-tag }}" ]]; then
-            git fetch origin
-            # Look for an existing RC branch for this month
-            EXISTING_RC=$(git branch -r | grep "origin/rc/${{ inputs.image-name }}-$PREFIX" | head -n 1 | sed 's/.*origin\///' || echo "")
-            
-            if [[ -n "$EXISTING_RC" ]]; then
-              # JOIN EXISTING: Extract version from branch name
-              VERSION_STR=$(echo "$EXISTING_RC" | sed 's/.*-//')
-              echo "tag=$VERSION_STR" >> $GITHUB_OUTPUT
-              echo "mode=rc" >> $GITHUB_OUTPUT
-              USE_BRANCH="$EXISTING_RC" # Tell build job to checkout this branch
+            # RC BRANCH DETECTION
+            EXIST_RC=$(git branch -r | grep "origin/rc/${{ inputs.image-name }}-$PREFIX" | head -n 1 | sed 's/.*origin\///' || echo "")
+            if [[ -n "$EXIST_RC" ]]; then
+              TAG_NAME=$(echo "$EXIST_RC" | sed 's/.*-//')
+              USE_BRANCH="$EXIST_RC"
+              MODE="rc"
             else
-              # START NEW: Standard increment logic
               TAGS=$(gh api /orgs/mapchete/packages/container/${{ inputs.image-name }}/versions --jq '.[].metadata.container.tags[]' 2>/dev/null || echo "")
               LATEST_CTR=$(echo "$TAGS" | grep "^$PREFIX" | sed "s/$PREFIX//" | sort -nr | head -n1)
-              [[ -z "$LATEST_CTR" ]] && NEW_TAG="${PREFIX}0" || NEW_TAG="${PREFIX}$((LATEST_CTR + 1))"
-              echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
-              echo "mode=rc" >> $GITHUB_OUTPUT
+              [[ -z "$LATEST_CTR" ]] && TAG_NAME="${PREFIX}0" || TAG_NAME="${PREFIX}$((LATEST_CTR + 1))"
+              MODE="rc"
             fi
             TARGET_LATEST="true"
           else
-            echo "tag=dev" >> $GITHUB_OUTPUT
-            echo "mode=rolling" >> $GITHUB_OUTPUT
+            TAG_NAME="dev"
           fi
-          
-          echo "target_latest=$TARGET_LATEST" >> $GITHUB_OUTPUT
+
+          echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "mode=$MODE" >> $GITHUB_OUTPUT
           echo "use_branch=$USE_BRANCH" >> $GITHUB_OUTPUT
+          echo "target_latest=$TARGET_LATEST" >> $GITHUB_OUTPUT
+
+      - name: Switch to PR Branch (if exists)
+        if: steps.version.outputs.mode == 'rc' && steps.version.outputs.use_branch != github.ref_name
+        run: git checkout ${{ steps.version.outputs.use_branch }}
+
+      - id: resolve
+        run: |
+          # This now reads the versions.yml from the RC branch if we switched
+          touch versions.yml 
+          M_DEF=$(grep '^MAPCHETE_REF:' versions.yml | cut -d' ' -f2 || echo "main")
+          EO_DEF=$(grep '^MAPCHETE_EO_REF:' versions.yml | cut -d' ' -f2 || echo "main")
+          HUB_DEF=$(grep '^MAPCHETE_HUB_REF:' versions.yml | cut -d' ' -f2 || echo "main")
+          CLI_DEF=$(grep '^MAPCHETE_HUB_CLI_REF:' versions.yml | cut -d' ' -f2 || echo "main")
+
+          D_REPO="${{ github.event.client_payload.source_repo }}"
+          D_REF="${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}"
+
+          # Logic: Input > Dispatch (if repo matches) > versions.yml (current branch)
+          echo "mapchete=${{ inputs.mapchete-ref || (github.event.client_payload.source_repo == 'mapchete' && (github.event.client_payload.image_tag || github.event.client_payload.sha)) || '$M_DEF' }}" >> $GITHUB_OUTPUT
+          echo "eo=${{ inputs.mapchete-eo-ref || (github.event.client_payload.source_repo == 'mapchete-eo' && (github.event.client_payload.image_tag || github.event.client_payload.sha)) || '$EO_DEF' }}" >> $GITHUB_OUTPUT
+          echo "hub=${{ inputs.mapchete-hub-ref || (github.event.client_payload.source_repo == 'mapchete-hub' && (github.event.client_payload.image_tag || github.event.client_payload.sha)) || '$HUB_DEF' }}" >> $GITHUB_OUTPUT
+          echo "cli=${{ inputs.mapchete-hub-cli-ref || (github.event.client_payload.source_repo == 'mapchete-hub-cli' && (github.event.client_payload.image_tag || github.event.client_payload.sha)) || '$CLI_DEF' }}" >> $GITHUB_OUTPUT
 
       - name: Generate Summary
         if: always()
