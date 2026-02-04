@@ -53,9 +53,6 @@ jobs:
           HUB_DEF=$(grep '^MAPCHETE_HUB_REF:' versions.yml | cut -d' ' -f2 || echo "main")
           CLI_DEF=$(grep '^MAPCHETE_HUB_CLI_REF:' versions.yml | cut -d' ' -f2 || echo "main")
 
-          D_REPO="${{ github.event.client_payload.source_repo }}"
-          D_REF="${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}"
-
           echo "mapchete=${{ inputs.mapchete-ref || (github.event.client_payload.source_repo == 'mapchete' && (github.event.client_payload.image_tag || github.event.client_payload.sha)) || '$M_DEF' }}" >> $GITHUB_OUTPUT
           echo "eo=${{ inputs.mapchete-eo-ref || (github.event.client_payload.source_repo == 'mapchete-eo' && (github.event.client_payload.image_tag || github.event.client_payload.sha)) || '$EO_DEF' }}" >> $GITHUB_OUTPUT
           echo "hub=${{ inputs.mapchete-hub-ref || (github.event.client_payload.source_repo == 'mapchete-hub' && (github.event.client_payload.image_tag || github.event.client_payload.sha)) || '$HUB_DEF' }}" >> $GITHUB_OUTPUT
@@ -92,6 +89,7 @@ jobs:
       - name: Generate Summary
         if: always()
         run: |
+          # Determine the visual Build Decision flag
           if [[ "${{ steps.check.outputs.run }}" == "true" ]]; then
             DECISION="## ⏩ BUILD PROCEEDING"
           else
@@ -101,11 +99,37 @@ jobs:
           echo "$DECISION" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
           echo "### 🛠️ Build Preparation Summary" >> $GITHUB_STEP_SUMMARY
+          
+          # Key Metadata Table
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
           echo "| **Target Image** | \`${{ inputs.image-name }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Operation Mode** | \`${{ steps.version.outputs.mode || 'N/A' }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Determined Tag** | **\`${{ steps.version.outputs.tag || 'N/A' }}\`** |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Manual Tag Input** | \`${{ inputs.image-tag || 'None' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Trigger Event** | \`${{ github.event_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          
+          # 1. Repository Dispatch Details (Conditional)
+          if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "#### 📡 Incoming Dispatch Payload" >> $GITHUB_STEP_SUMMARY
+            echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Source Repo** | \`${{ github.event.client_payload.source_repo }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Event Type** | \`${{ github.event.client_payload.type }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Payload Tag** | \`${{ github.event.client_payload.image_tag || 'N/A' }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Payload SHA** | \`${{ github.event.client_payload.sha || 'N/A' }}\` |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # 2. Final Resolved Versions for Build Args
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### 📦 Resolved Component Versions" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Resolved Reference |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| **mapchete** | \`${{ steps.resolve.outputs.mapchete }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **mapchete-eo** | \`${{ steps.resolve.outputs.eo }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **mapchete-hub** | \`${{ steps.resolve.outputs.hub }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **mapchete-hub-cli** | \`${{ steps.resolve.outputs.cli }}\` |" >> $GITHUB_STEP_SUMMARY
 
   build:
     needs: prepare
@@ -138,7 +162,6 @@ jobs:
         run: |
           LOCAL_FINGERPRINT=$(docker run --rm --entrypoint /bin/sh local-test-image:latest -c "cat /app/uv_fingerprint" | tr -d '\r\n ')
           echo "fingerprint=$LOCAL_FINGERPRINT" >> $GITHUB_OUTPUT
-
           if [[ "${{ github.event_name }}" == "repository_dispatch" && "${{ github.event.client_payload.type }}" == "version" ]]; then
             echo "changed=true" >> $GITHUB_OUTPUT
           else
