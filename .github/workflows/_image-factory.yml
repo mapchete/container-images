@@ -308,9 +308,11 @@ jobs:
       - name: Update Tracking
         if: needs.prepare.outputs.mode == 'rc'
         run: |
+          # 1. Setup Variables
           PUSH_DATE=$(date +'%Y-%m-%d'); echo "PUSH_DATE=$PUSH_DATE" >> $GITHUB_ENV
+          FINAL_VER="${{ needs.prepare.outputs.calculated-tag }}"
           
-          # 1. Determine the Pins (Truth from the build)
+          # 2. Select Release Track Pins (Truth)
           if [[ "${{ steps.image-fingerprint-check.outputs.changed }}" == "true" ]]; then
             M_REF="${{ needs.prepare.outputs.mapchete-ref }}"
             EO_REF="${{ needs.prepare.outputs.mapchete-eo-ref }}"
@@ -322,54 +324,66 @@ jobs:
             H_REF="${{ steps.image-fingerprint-check.outputs.hub_ref }}"
             C_REF="${{ steps.image-fingerprint-check.outputs.cli_ref }}"
           fi
+          
+          is_valid() { [[ -n "$1" && "$1" != "null" && "$1" != "N/A" ]]; }
 
-          # 2. Surgical Update Function
-          update_row() {
-            local key="$1"
-            local val="$2"
-            [[ -z "$val" || "$val" == "null" || "$val" == "N/A" ]] && return
-            
-            if grep -q "^${key}:" versions.yml; then
-              # Row exists: replace value after the colon
-              sed -i "s|^${key}:.*|${key}: ${val}|" versions.yml
-            else
-              # Row missing: append to end
-              echo "${key}: ${val}" >> versions.yml
-            fi
-          }
+          # 3. Handle CHANGELOG.rst
+          TITLE="${FINAL_VER} - ${PUSH_DATE}"
+          LEN=${#TITLE}
+          UNDERLINE=$(printf '%0.s-' $(seq 1 $LEN))
 
-          # 3. Update the RELEASE track (Preserves ROLLING track automatically)
-          update_row "MAPCHETE_REF_RELEASE" "$M_REF"
-          update_row "MAPCHETE_EO_REF_RELEASE" "$EO_REF"
-          update_row "MAPCHETE_HUB_REF_RELEASE" "$H_REF"
-          update_row "MAPCHETE_HUB_CLI_REF_RELEASE" "$C_REF"
-
-          # 4. Update the CHANGELOG.rst (Atomic Rebuild of the specific version block)
-          FINAL_VER="${{ needs.prepare.outputs.calculated-tag }}"
           if grep -q "^${FINAL_VER}" CHANGELOG.rst; then
+            # --- Update Existing Block ---
             START_LN=$(grep -n "^${FINAL_VER}" CHANGELOG.rst | head -n 1 | cut -d: -f1)
             END_LN=$(tail -n +$((START_LN + 1)) CHANGELOG.rst | grep -n -m 1 "^[0-9]" | cut -d: -f1)
             [ -z "$END_LN" ] && END_LN=$(wc -l < CHANGELOG.rst) || END_LN=$((START_LN + END_LN - 1))
             
-            # Extract and Clean
+            # Extract and strip old bullets
             sed -n "${START_LN},${END_LN}p" CHANGELOG.rst | grep -v "\* Aligned" > block.tmp
             
-            # Construct Bullets
+            # Generate fresh bullets (including CLI)
             {
               echo "* Aligned **mapchete** to \`$M_REF\`"
               echo "* Aligned **mapchete-eo** to \`$EO_REF\`"
               echo "* Aligned **mapchete-hub** to \`$H_REF\`"
-              [[ -n "$C_REF" && "$C_REF" != "N/A" ]] && echo "* Aligned **mapchete-hub-cli** to \`$C_REF\`"
+              is_valid "$C_REF" && echo "* Aligned **mapchete-hub-cli** to \`$C_REF\`"
             } > bullets.tmp
             
             sed -i "4r bullets.tmp" block.tmp
             
-            # Reassemble
+            # Reassemble file
             head -n $((START_LN - 1)) CHANGELOG.rst > changelog.new
             cat block.tmp >> changelog.new
             tail -n +$((END_LN + 1)) CHANGELOG.rst >> changelog.new
             mv changelog.new CHANGELOG.rst
+          else
+            # --- New Block Entry ---
+            {
+              echo "$TITLE"
+              echo "$UNDERLINE"
+              echo ""
+              echo "* Aligned **mapchete** to \`$M_REF\`"
+              echo "* Aligned **mapchete-eo** to \`$EO_REF\`"
+              echo "* Aligned **mapchete-hub** to \`$H_REF\`"
+              is_valid "$C_REF" && echo "* Aligned **mapchete-hub-cli** to \`$C_REF\`"
+              echo ""
+            } > new_block.tmp
+            
+            # Atomic file reconstruction to enforce spacing
+            # Lines 1-4 are the Main Header. 5-6 are the 2 blank lines.
+            head -n 4 CHANGELOG.rst > changelog.new
+            echo "" >> changelog.new
+            echo "" >> changelog.new
+            cat new_block.tmp >> changelog.new
+            
+            # Append everything from the old file starting AFTER the header (Line 5+)
+            # but using 'cat -s' later to squeeze accidental triple spaces
+            tail -n +5 CHANGELOG.rst >> changelog.new
+            mv changelog.new CHANGELOG.rst
           fi
+
+          # Final Polish: Squeeze blank lines and remove trailing whitespace
+          cat -s CHANGELOG.rst | sed 's/[[:space:]]*$//' > CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.rst
 
       - name: Automated Version PR
         if: needs.prepare.outputs.mode == 'rc'

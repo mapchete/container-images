@@ -55,10 +55,17 @@ The default versions (branches, tags, or SHAs) for the dependent repositories ar
 
 .. code-block:: yaml
 
-   MAPCHETE_REF: main
-   MAPCHETE_EO_REF: main
-   MAPCHETE_HUB_REF: main
-   MAPCHETE_HUB_CLI_REF: main
+   MAPCHETE_REF_RELEASE: 2026.2.1
+   MAPCHETE_EO_REF_RELEASE: 2026.2.0
+   MAPCHETE_HUB_REF_RELEASE: 2025.11.0
+   MAPCHETE_HUB_CLI_REF_RELEASE: 2025.9.0
+
+
+   MAPCHETE_REF_ROLLING: main
+   MAPCHETE_EO_REF_ROLLING: main
+   MAPCHETE_HUB_REF_ROLLING: main
+   MAPCHETE_HUB_CLI_REF_ROLLING: main
+
 
 When creating a release tag in this repository, these versions are "frozen" for that specific image tag, ensuring reproducible builds.
 
