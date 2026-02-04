@@ -256,16 +256,16 @@ build:
           assignees: "scartography"
           reviewers: "ungarj"
 
-  cleanup-registry:
-    needs: [prepare, build]
-    if: always() && needs.prepare.outputs.run-build == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      packages: write
-    steps:
-      - name: Cleanup
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TARGETS=$(gh api --paginate "/orgs/mapchete/packages/container/${{ inputs.image-name }}/versions" --jq '.[] | select(.metadata.container.tags | length == 0) | .id')
-          for ID in $TARGETS; do gh api --method DELETE "/orgs/mapchete/packages/container/${{ inputs.image-name }}/versions/$ID" || true; done
+cleanup-registry:
+  needs: [prepare, build]
+  if: always() && needs.prepare.outputs.run-build == 'true'
+  runs-on: ubuntu-latest
+  permissions:
+    packages: write
+  steps:
+    - name: Cleanup
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        TARGETS=$(gh api --paginate "/orgs/mapchete/packages/container/${{ inputs.image-name }}/versions" --jq '.[] | select(.metadata.container.tags | length == 0) | .id')
+        for ID in $TARGETS; do gh api --method DELETE "/orgs/mapchete/packages/container/${{ inputs.image-name }}/versions/$ID" || true; done
