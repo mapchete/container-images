@@ -15,16 +15,16 @@ on:
         default: 'manual-build'
       mapchete-ref:
         description: 'mapchete branch/tag'
-        default: 'main'
+        default: ''
       mapchete-eo-ref:
         description: 'mapchete-eo branch/tag'
-        default: 'main'
+        default: ''
       mapchete-hub-ref:
         description: 'mapchete-hub branch/tag'
-        default: 'main'
+        default: ''
       mapchete-hub-cli-ref:
         description: 'mapchete-hub-cli branch/tag'
-        default: 'main'
+        default: ''
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.client_payload.source_repo || github.ref }}

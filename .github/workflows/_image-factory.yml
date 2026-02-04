@@ -304,18 +304,24 @@ jobs:
           
           # 1. Update versions.yml
           KEY_NAME=$(echo "${SOURCE//-/_}_REF" | tr '[:lower:]' '[:upper:]')
-          sed -i "s|^${KEY_NAME}:.*|${KEY_NAME}: $SOURCE_VER|" versions.yml
+          # Ensure the key exists or append it if missing
+          if grep -q "^${KEY_NAME}:" versions.yml; then
+            sed -i "s|^${KEY_NAME}:.*|${KEY_NAME}: $SOURCE_VER|" versions.yml
+          else
+            echo "${KEY_NAME}: $SOURCE_VER" >> versions.yml
+          fi
           
           # 2. Update CHANGELOG.rst
           if grep -q "^${FINAL_VER}" CHANGELOG.rst; then
-            # If bullet exists, replace it. If not, insert it.
-            if grep -A 10 "^${FINAL_VER}" CHANGELOG.rst | grep -q "* Aligned **${SOURCE}**"; then
-              sed -i "/^${FINAL_VER}/,/^$/ s|* Aligned **${SOURCE}**.*|* Aligned **${SOURCE}** to \`${SOURCE_VER}\`.|" CHANGELOG.rst
-            else
-              LINE_NUM=$(grep -n "^${FINAL_VER}" CHANGELOG.rst | head -n 1 | cut -d: -f1)
-              sed -i "$((LINE_NUM + 3))i * Aligned **${SOURCE}** to \`${SOURCE_VER}\`." CHANGELOG.rst
-            fi
+            # Delete any existing lines for this source repo to prevent stacking
+            # We look for the block starting with the version until an empty line
+            sed -i "/^${FINAL_VER}/,/^$/ { /\*\*${SOURCE}\*\*/d; }" CHANGELOG.rst
+            
+            # Insert the fresh bullet 3 lines after the header
+            LINE_NUM=$(grep -n "^${FINAL_VER}" CHANGELOG.rst | head -n 1 | cut -d: -f1)
+            sed -i "$((LINE_NUM + 3))i * Aligned **${SOURCE}** to \`${SOURCE_VER}\`." CHANGELOG.rst
           else
+            # Create a brand new version block
             TITLE="${FINAL_VER} - ${PUSH_DATE}"
             LEN=${#TITLE}
             UNDERLINE=$(printf '%0.s-' $(seq 1 $LEN))
@@ -330,28 +336,24 @@ jobs:
           token: ${{ secrets.MAPCHETE_PAT || secrets.GITHUB_TOKEN }}
           commit-message: "rc: align ${{ github.event.client_payload.source_repo }} to ${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}"
           branch: "rc/${{ inputs.image-name }}-${{ needs.prepare.outputs.calculated-tag }}"
+          # CRITICAL: add these to ensure the files are actually updated in the repo
+          add-paths: |
+            versions.yml
+            CHANGELOG.rst
           title: "🧪 RC: ${{ inputs.image-name }} ${{ needs.prepare.outputs.calculated-tag }}"
           body: |
             ### 🧪 Release Candidate Update
             This PR tracks the alignment for version `${{ needs.prepare.outputs.calculated-tag }}`.
 
-            #### 📦 Component Status (current branch)
+            #### 📦 Component Status
             | Component | Reference |
             | :--- | :--- |
             | **mapchete** | `${{ needs.prepare.outputs.mapchete-ref }}` |
             | **mapchete-eo** | `${{ needs.prepare.outputs.mapchete-eo-ref }}` |
             | **mapchete-hub** | `${{ needs.prepare.outputs.mapchete-hub-ref }}` |
             | **mapchete-hub-cli** | `${{ needs.prepare.outputs.mapchete-hub-cli-ref }}` |
-
-            > **Note:** The values above reflect the `versions.yml` on this branch. 
-            > **Latest Trigger:** `${{ github.event.client_payload.source_repo }}` updated to `${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}`.
-
-            #### 🚀 Registry Tags
-            - `ghcr.io/mapchete/${{ inputs.image-name }}:rc-${{ needs.prepare.outputs.calculated-tag }}`
-            - `ghcr.io/mapchete/${{ inputs.image-name }}:latest`
-
             
-
+            **Latest Alignment:** `${{ github.event.client_payload.source_repo }}` → `${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}`
           base: main
           delete-branch: true
           assignees: "scartography"
