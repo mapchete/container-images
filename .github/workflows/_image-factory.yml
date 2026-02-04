@@ -339,28 +339,36 @@ jobs:
       - name: Update Tracking
         if: needs.prepare.outputs.mode == 'rc'
         run: |
-          # 1. Setup Variables & Export Date
+          # 1. Setup Variables
           PUSH_DATE=$(date +'%Y-%m-%d')
           echo "PUSH_DATE=$PUSH_DATE" >> $GITHUB_ENV
           
-          SOURCE="${{ github.event.client_payload.source_repo }}"
-          # Select version: SHA for dev/empty, Tag for version dispatches
-          D_TAG="${{ github.event.client_payload.image_tag }}"
-          D_SHA="${{ github.event.client_payload.sha }}"
-          [[ "$D_TAG" == "dev" || -z "$D_TAG" ]] && SOURCE_VER="$D_SHA" || SOURCE_VER="$D_TAG"
+          # Determine the Truth based on build status
+          if [[ "${{ steps.image-fingerprint-check.outputs.changed }}" == "true" ]]; then
+            M_REF="${{ needs.prepare.outputs.mapchete-ref }}"
+            EO_REF="${{ needs.prepare.outputs.mapchete-eo-ref }}"
+            H_REF="${{ needs.prepare.outputs.mapchete-hub-ref }}"
+            C_REF="${{ needs.prepare.outputs.mapchete-hub-cli-ref }}"
+          else
+            M_REF="${{ steps.image-fingerprint-check.outputs.m_ref }}"
+            EO_REF="${{ steps.image-fingerprint-check.outputs.eo_ref }}"
+            H_REF="${{ steps.image-fingerprint-check.outputs.hub_ref }}"
+            C_REF="${{ steps.image-fingerprint-check.outputs.cli_ref }}"
+          fi
           
+          SOURCE="${{ github.event.client_payload.source_repo }}"
           FINAL_VER="${{ needs.prepare.outputs.calculated-tag }}"
           
-          # 2. Update versions.yml
-          KEY_NAME=$(echo "${SOURCE//-/_}_REF" | tr '[:lower:]' '[:upper:]')
-          sed -i "/^${KEY_NAME}:/d" versions.yml
-          echo "${KEY_NAME}: $SOURCE_VER" >> versions.yml
+          # 2. Rebuild versions.yml from scratch (Guarantees no missing updates)
+          cat <<EOF > versions.yml
+          MAPCHETE_REF: $M_REF
+          MAPCHETE_EO_REF: $EO_REF
+          MAPCHETE_HUB_REF: $H_REF
+          MAPCHETE_HUB_CLI_REF: $C_REF
+          EOF
 
           # 3. Update CHANGELOG.rst (Surgical Deduplication)
           if grep -q "^${FINAL_VER}" CHANGELOG.rst; then
-            echo "Updating existing block for $FINAL_VER"
-            
-            # Find the version block boundaries
             START_LN=$(grep -n "^${FINAL_VER}" CHANGELOG.rst | head -n 1 | cut -d: -f1)
             END_LN=$(tail -n +$((START_LN + 1)) CHANGELOG.rst | grep -n -m 1 "^[0-9]" | cut -d: -f1)
             
@@ -370,21 +378,23 @@ jobs:
                 END_LN=$((START_LN + END_LN - 1))
             fi
 
-            # Extract, Clean, and Update the block
             sed -n "${START_LN},${END_LN}p" CHANGELOG.rst > block.tmp
-            # Filter out any existing lines for this component
-            grep -v "\*\*${SOURCE}\*\*" block.tmp | grep -v "Aligned with \*\*${SOURCE}\*\*" > block_clean.tmp
             
-            # Insert the new bullet (NO trailing dot)
-            sed -i "4i * Aligned **${SOURCE}** to \`${SOURCE_VER}\`" block_clean.tmp
+            # Wipe all "Aligned" bullets in this block to rebuild from current truth
+            # This prevents stacking AND handles the source update in one go
+            grep -v "\* Aligned" block.tmp > block_clean.tmp
             
-            # Reassemble file
+            # Re-insert the 4 bullets (No trailing dots)
+            BULLETS="* Aligned **mapchete** to \`$M_REF\`\n* Aligned **mapchete-eo** to \`$EO_REF\`\n* Aligned **mapchete-hub** to \`$H_REF\`\n* Aligned **mapchete-hub-cli** to \`$C_REF\`"
+            sed -i "4i ${BULLETS}" block_clean.tmp
+            
+            # Reassemble
             head -n $((START_LN - 1)) CHANGELOG.rst > changelog.new
             cat block_clean.tmp >> changelog.new
             tail -n +$((END_LN + 1)) CHANGELOG.rst >> changelog.new
             mv changelog.new CHANGELOG.rst
             
-            # Standardize Header Date & Underline
+            # Update Header/Underline
             TITLE="${FINAL_VER} - ${PUSH_DATE}"
             LEN=${#TITLE}
             UNDERLINE=$(printf '%0.s-' $(seq 1 $LEN))
@@ -392,19 +402,15 @@ jobs:
             sed -i "$((START_LN + 1))s|.*|${UNDERLINE}|" CHANGELOG.rst
             
           else
-            echo "Creating brand new version block"
             TITLE="${FINAL_VER} - ${PUSH_DATE}"
             LEN=${#TITLE}
             UNDERLINE=$(printf '%0.s-' $(seq 1 $LEN))
-            # NO trailing dot in the block template
-            BLOCK="${TITLE}\n${UNDERLINE}\n\n* Aligned **${SOURCE}** to \`${SOURCE_VER}\`\n"
+            BLOCK="${TITLE}\n${UNDERLINE}\n\n* Aligned **mapchete** to \`$M_REF\`\n* Aligned **mapchete-eo** to \`$EO_REF\`\n* Aligned **mapchete-hub** to \`$H_REF\`\n* Aligned **mapchete-hub-cli** to \`$C_REF\`\n"
             sed -i "4i ${BLOCK}" CHANGELOG.rst
           fi
 
-          # Final Sanity Clean
+          # Final Cleanup
           sed -i 's/[[:space:]]*$//' CHANGELOG.rst
-          echo "--- Resulting Changelog Snippet ---"
-          head -n 15 CHANGELOG.rst
 
       - name: Automated Version PR
         if: needs.prepare.outputs.mode == 'rc'
