@@ -438,7 +438,7 @@ jobs:
             | **mapchete-hub** | `${{ steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mapchete-hub-ref || steps.image-fingerprint-check.outputs.hub_ref }}` |
             | **mapchete-hub-cli** | `${{ steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mapchete-hub-cli-ref || steps.image-fingerprint-check.outputs.cli_ref }}` |
 
-            > **Note:** These versions are synced with the Docker image at `ghcr.io/mapchete/${{ inputs.image-name }}:rc-${{ needs.prepare.outputs.calculated-tag }}`.
+            > **Note:** These versions reflect the actual state of the image at `ghcr.io/mapchete/${{ inputs.image-name }}:rc-${{ needs.prepare.outputs.calculated-tag }}`.
             
             ---
             *Latest Update Triggered by:* **${{ github.event.client_payload.source_repo }}**
