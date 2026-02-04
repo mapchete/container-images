@@ -133,7 +133,7 @@ jobs:
           echo "| **mapchete-hub** | \`${{ steps.resolve.outputs.hub }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **mapchete-hub-cli** | \`${{ steps.resolve.outputs.cli }}\` |" >> $GITHUB_STEP_SUMMARY
 
-  build:
+build:
     needs: prepare
     if: needs.prepare.outputs.run-build == 'true'
     runs-on: ubuntu-latest
@@ -159,6 +159,67 @@ jobs:
             MAPCHETE_HUB_REF=${{ needs.prepare.outputs.mapchete-hub-ref }}
             MAPCHETE_HUB_CLI_REF=${{ needs.prepare.outputs.mapchete-hub-cli-ref }}
 
+      - name: Image Fingerprint Check
+        id: image-fingerprint-check
+        run: |
+          LOCAL_FINGERPRINT=$(docker run --rm --entrypoint /bin/sh local-test-image:latest -c "cat /app/uv_fingerprint" | tr -d '\r\n ')
+          echo "fingerprint=$LOCAL_FINGERPRINT" >> $GITHUB_OUTPUT
+
+          # Force build on version dispatches to ensure release tag creation
+          if [[ "${{ github.event_name }}" == "repository_dispatch" && "${{ github.event.client_payload.type }}" == "version" ]]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            REMOTE_TAG="latest"
+            [[ "${{ github.ref_name }}" != "main" ]] && REMOTE_TAG="dev"
+            INSPECT_JSON=$(skopeo inspect docker://ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG 2>/dev/null || echo '{"Labels":{}}')
+            REMOTE_FINGERPRINT=$(echo "$INSPECT_JSON" | jq -r '.Labels["org.mapchete.image_fingerprint"] // "none"' | tr -d '\r\n ')
+            
+            if [[ "$LOCAL_FINGERPRINT" == "$REMOTE_FINGERPRINT" && "$REMOTE_FINGERPRINT" != "none" ]]; then
+              echo "changed=false" >> $GITHUB_OUTPUT
+            else
+              echo "changed=true" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - uses: docker/login-action@v3
+        if: steps.image-fingerprint-check.outputs.changed == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        if: steps.image-fingerprint-check.outputs.changed == 'true'
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/mapchete/${{ inputs.image-name }}
+          flavor: latest=false
+          tags: |
+            # 1. Manual Input (Hard override)
+            type=raw,value=${{ inputs.image-tag }},enable=${{ inputs.image-tag != '' }}
+            
+            # 2. RC Mode: Only push rc- tag for version dispatches
+            type=raw,value=rc-${{ needs.prepare.outputs.calculated-tag }},enable=${{ needs.prepare.outputs.mode == 'rc' }}
+            
+            # 3. Final Production Tag: Only on Main branch after PR merge
+            type=raw,value=${{ needs.prepare.outputs.calculated-tag }},enable=${{ needs.prepare.outputs.mode == 'release' || (github.ref == 'refs/heads/main' && needs.prepare.outputs.calculated-tag != '' && needs.prepare.outputs.mode != 'rc') }}
+            
+            # 4. Rolling Tags
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || needs.prepare.outputs.tag == 'latest' }}
+            type=raw,value=dev,enable=${{ (github.ref != 'refs/heads/main' && needs.prepare.outputs.mode != 'release') || needs.prepare.outputs.tag == 'dev' }}
+            type=ref,event=pr
+
+      - id: push
+        if: steps.image-fingerprint-check.outputs.changed == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ inputs.image-name }}/
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            IMAGE_FINGERPRINT=${{ steps.image-fingerprint-check.outputs.fingerprint }}
+
       - name: Update Version Tracking Files
         if: |
           steps.image-fingerprint-check.outputs.changed == 'true' && 
@@ -167,25 +228,12 @@ jobs:
           SOURCE="${{ github.event.client_payload.source_repo }}"
           SOURCE_VER="${{ github.event.client_payload.image_tag }}"
           FINAL_VER="${{ needs.prepare.outputs.calculated-tag }}"
-          
-          # 1. Update versions.yml
-          sed -i "s/^${SOURCE^^}_REF:.*/${SOURCE^^}_REF: $SOURCE_VER/" versions.yml
-          
-          # 2. Update CHANGELOG.rst
-          # Calculate the length of the version string for the RST underline
           LEN=${#FINAL_VER}
           UNDERLINE=$(printf '%0.s-' $(seq 1 $LEN))
-          
-          # Prepare the entry
           ENTRY="${FINAL_VER}\n${UNDERLINE}\n\n* Aligned with **${SOURCE}** @ \`${SOURCE_VER}\`.\n* Build Fingerprint: \`${{ steps.image-fingerprint-check.outputs.fingerprint }}\` \n"
           
-          if [[ ! -f CHANGELOG.rst ]]; then
-            echo -e "Changelog\n=========\n\n$ENTRY" > CHANGELOG.rst
-          else
-            # Prepend after the main title (assuming title is on line 1 and underline on line 2)
-            # We insert at line 4 to leave a gap after the title
-            sed -i "4i $ENTRY" CHANGELOG.rst
-          fi
+          sed -i "s/^${SOURCE^^}_REF:.*/${SOURCE^^}_REF: $SOURCE_VER/" versions.yml
+          [[ ! -f CHANGELOG.rst ]] && echo -e "Changelog\n=========\n\n$ENTRY" > CHANGELOG.rst || sed -i "4i $ENTRY" CHANGELOG.rst
 
       - name: Automated Version PR
         if: |
@@ -199,15 +247,10 @@ jobs:
           title: "🧪 RC: ${{ inputs.image-name }} ${{ needs.prepare.outputs.calculated-tag }}"
           body: |
             ### 🧪 Release Candidate Review
-            This PR proposes a new version alignment for `${{ inputs.image-name }}`.
-            
             **Proposed Version:** `${{ needs.prepare.outputs.calculated-tag }}`
             **Test Image:** `ghcr.io/mapchete/${{ inputs.image-name }}:rc-${{ needs.prepare.outputs.calculated-tag }}`
             
-            **Changes:**
-            - Updates `versions.yml` to pull `${{ github.event.client_payload.source_repo }}` @ `${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}`.
-            
-            **To Release:** Review the changes and merge this PR to `main`. The official tag will be applied upon merge.
+            **To Release:** Merge this PR to `main`. The official tag will be applied upon merge.
           base: main
           delete-branch: true
           assignees: "scartography"
