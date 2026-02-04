@@ -22,7 +22,7 @@ on:
         default: ''
 
 jobs:
-  prepare:
+prepare:
     runs-on: ubuntu-latest
     outputs:
       run-build: ${{ steps.check.outputs.run }}
@@ -32,6 +32,7 @@ jobs:
       mapchete-hub-cli-ref: ${{ steps.resolve.outputs.cli }}
     steps:
       - uses: actions/checkout@v4
+      
       - id: check
         run: |
           if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
@@ -52,12 +53,9 @@ jobs:
 
           # 2. Extract values from the repository_dispatch payload if they exist
           DISPATCH_REPO="${{ github.event.client_payload.source_repo }}"
-          # Prioritize image_tag (versioning) over sha (development commits)
           DISPATCH_REF="${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}"
 
-          # 3. Resolve final references using a strict priority order:
-          # Manual Input > Matching Repository Dispatch > versions.yml Default
-          
+          # 3. Resolve final references
           if [[ -n "${{ inputs.mapchete-ref }}" ]]; then M_REF="${{ inputs.mapchete-ref }}"
           elif [[ "$DISPATCH_REPO" == "mapchete" ]]; then M_REF="$DISPATCH_REF"
           else M_REF="$MAPCHETE_DEFAULT_VAL"; fi
@@ -78,6 +76,20 @@ jobs:
           echo "eo=$EO_REF" >> $GITHUB_OUTPUT
           echo "hub=$HUB_REF" >> $GITHUB_OUTPUT
           echo "cli=$CLI_REF" >> $GITHUB_OUTPUT
+
+      - name: Generate Summary
+        run: |
+          echo "### 🛠️ Build Preparation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger Event:** \`${{ github.event_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Target Image:** \`${{ inputs.image-name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Run Build:** \`${{ steps.check.outputs.run }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Resolved Reference |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| mapchete | \`${{ steps.resolve.outputs.mapchete }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| mapchete-eo | \`${{ steps.resolve.outputs.eo }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| mapchete-hub | \`${{ steps.resolve.outputs.hub }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| mapchete-hub-cli | \`${{ steps.resolve.outputs.cli }}\` |" >> $GITHUB_STEP_SUMMARY
 
   build:
     needs: prepare
@@ -194,23 +206,77 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
+      - name: Update Version Tracking Files
+        if: github.event_name == 'repository_dispatch'
+        run: |
+          NEW_REF="${{ github.event.client_payload.image_tag }}"
+          SOURCE="${{ github.event.client_payload.source_repo }}"
+          TYPE="${{ github.event.client_payload.type }}"
+          DATE=$(date +'%Y-%m-%d')
+          
+          # 1. Determine the target reference for versions.yml
+          # If it's a version release, use the tag. Otherwise, use 'main'.
+          if [[ "$TYPE" == "version" ]]; then
+            TARGET_REF="$NEW_REF"
+          else
+            TARGET_REF="main"
+          fi
+
+          echo "Updating $SOURCE to $TARGET_REF in versions.yml"
+
+          # 2. Update versions.yml (assuming keys exist in the file)
+          case "$SOURCE" in
+            "mapchete")
+              sed -i "s/^MAPCHETE_REF:.*/MAPCHETE_REF: $TARGET_REF/" versions.yml
+              ;;
+            "mapchete-eo")
+              sed -i "s/^MAPCHETE_EO_REF:.*/MAPCHETE_EO_REF: $TARGET_REF/" versions.yml
+              ;;
+            "mapchete-hub")
+              sed -i "s/^MAPCHETE_HUB_REF:.*/MAPCHETE_HUB_REF: $TARGET_REF/" versions.yml
+              ;;
+            "mapchete-hub-cli")
+              sed -i "s/^MAPCHETE_HUB_CLI_REF:.*/MAPCHETE_HUB_CLI_REF: $TARGET_REF/" versions.yml
+              ;;
+          esac
+
+          # 3. Handle CHANGELOG.md (Only for Version Releases)
+          if [[ "$TYPE" == "version" ]]; then
+            # Create file if it doesn't exist
+            if [[ ! -f CHANGELOG.md ]]; then
+              echo "# Changelog" > CHANGELOG.md
+              echo "All notable changes to the Mapchete Container Images will be documented in this file." >> CHANGELOG.md
+            fi
+
+            # Create the new entry
+            NEW_ENTRY="## [$NEW_REF] - $DATE\n- Automated release alignment: **$SOURCE** updated to \`$NEW_REF\`\n- Image: \`ghcr.io/mapchete/${{ inputs.image-name }}:$NEW_REF\`\n- Fingerprint: \`${{ steps.image-fingerprint-check.outputs.fingerprint }}\` \n"
+
+            # Prepend the entry below the header (line 3)
+            sed -i "3i $NEW_ENTRY" CHANGELOG.md
+          fi
+
       - name: Automated Version PR
         if: github.event_name == 'repository_dispatch' && github.event.client_payload.type == 'version'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.MAPCHETE_PAT || secrets.GITHUB_TOKEN }}
-          commit-message: "chore: update ${{ inputs.image-name }} to ${{ github.event.client_payload.image_tag }}"
-          branch: "bump/${{ inputs.image-name }}"
-          title: "🚀 Bump ${{ inputs.image-name }} version"
+          commit-message: "chore(release): align ${{ inputs.image-name }} with ${{ github.event.client_payload.image_tag }}"
+          branch: "release/${{ inputs.image-name }}-${{ github.event.client_payload.image_tag }}"
+          title: "🚀 Release Align: ${{ inputs.image-name }} @ ${{ github.event.client_payload.image_tag }}"
           body: |
-            Automated update from `${{ github.event.client_payload.source_repo }}`.
-            - **New Version:** `${{ github.event.client_payload.image_tag }}`
-            - **Fingerprint:** `${{ steps.image-fingerprint-check.outputs.fingerprint }}`
+            ### 📦 Automated Release Alignment
+            A new tagged version was detected in the source repository.
+            
+            **Changes:**
+            1. **versions.yml**: Updated `${{ github.event.client_payload.source_repo }}` reference to `${{ github.event.client_payload.image_tag }}`.
+            2. **CHANGELOG.md**: Added release entry.
+            
+            Verification Fingerprint: `${{ steps.image-fingerprint-check.outputs.fingerprint }}`
           base: main
           delete-branch: true
+          labels: "automated-pr, release-alignment"
           assignees: "scartography"
           reviewers: "ungarj"
-          labels: "automated-pr"
 
   cleanup-registry:
     needs: [prepare, build]
