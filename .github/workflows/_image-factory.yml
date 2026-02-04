@@ -31,6 +31,7 @@ jobs:
       mapchete-hub-ref: ${{ steps.resolve.outputs.hub }}
       mapchete-hub-cli-ref: ${{ steps.resolve.outputs.cli }}
       calculated-tag: ${{ steps.version.outputs.tag }}
+      mode: ${{ steps.version.outputs.mode }}
     steps:
       - uses: actions/checkout@v4
       
@@ -65,38 +66,28 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Variables for clarity
           EVENT="${{ github.event_name }}"
           P_TYPE="${{ github.event.client_payload.type }}"
           P_TAG="${{ github.event.client_payload.image_tag }}"
           
-          # 1. FINAL RELEASE: Manual Git Tag on container-images repo
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
             echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
             echo "mode=release" >> $GITHUB_OUTPUT
-
-          # 2. ROLLING: Dispatch requested 'latest' or 'dev' specifically
           elif [[ "$EVENT" == "repository_dispatch" && "$P_TAG" =~ ^(latest|dev)$ ]]; then
             echo "tag=$P_TAG" >> $GITHUB_OUTPUT
             echo "mode=rolling" >> $GITHUB_OUTPUT
-
-          # 3. RELEASE CANDIDATE: Version Dispatch or Manual run (no tag provided)
           elif [[ "$P_TYPE" == "version" ]] || [[ "$EVENT" == "workflow_dispatch" && -z "${{ inputs.image-tag }}" ]]; then
             PREFIX="$(date +'%Y.%-m')."
             TAGS=$(gh api /orgs/mapchete/packages/container/${{ inputs.image-name }}/versions --jq '.[].metadata.container.tags[]' 2>/dev/null || echo "")
             LATEST_CTR=$(echo "$TAGS" | grep "^$PREFIX" | sed "s/$PREFIX//" | sort -nr | head -n1)
-            
-            if [[ -z "$LATEST_CTR" ]]; then NEW_TAG="${PREFIX}0"; else NEW_TAG="${PREFIX}$((LATEST_CTR + 1))"; fi
+            [[ -z "$LATEST_CTR" ]] && NEW_TAG="${PREFIX}0" || NEW_TAG="${PREFIX}$((LATEST_CTR + 1))"
             
             echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
-            echo "mode=rc" >> $GITHUB_OUTPUT
-            
+            echo "mode=rc" >> $GITHUB_OUTPUT # This MUST be rc for version dispatches
           else
-            # 4. DEFAULT/FALLBACK
             echo "tag=dev" >> $GITHUB_OUTPUT
             echo "mode=rolling" >> $GITHUB_OUTPUT
           fi
-
       - name: Generate Summary
         if: always()
         run: |
@@ -168,67 +159,6 @@ jobs:
             MAPCHETE_HUB_REF=${{ needs.prepare.outputs.mapchete-hub-ref }}
             MAPCHETE_HUB_CLI_REF=${{ needs.prepare.outputs.mapchete-hub-cli-ref }}
 
-      - name: Image Fingerprint Check
-        id: image-fingerprint-check
-        run: |
-          LOCAL_FINGERPRINT=$(docker run --rm --entrypoint /bin/sh local-test-image:latest -c "cat /app/uv_fingerprint" | tr -d '\r\n ')
-          echo "fingerprint=$LOCAL_FINGERPRINT" >> $GITHUB_OUTPUT
-
-          # Force build on version dispatches to ensure release tag creation
-          if [[ "${{ github.event_name }}" == "repository_dispatch" && "${{ github.event.client_payload.type }}" == "version" ]]; then
-            echo "changed=true" >> $GITHUB_OUTPUT
-          else
-            REMOTE_TAG="latest"
-            [[ "${{ github.ref_name }}" != "main" ]] && REMOTE_TAG="dev"
-            INSPECT_JSON=$(skopeo inspect docker://ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG 2>/dev/null || echo '{"Labels":{}}')
-            REMOTE_FINGERPRINT=$(echo "$INSPECT_JSON" | jq -r '.Labels["org.mapchete.image_fingerprint"] // "none"' | tr -d '\r\n ')
-            
-            if [[ "$LOCAL_FINGERPRINT" == "$REMOTE_FINGERPRINT" && "$REMOTE_FINGERPRINT" != "none" ]]; then
-              echo "changed=false" >> $GITHUB_OUTPUT
-            else
-              echo "changed=true" >> $GITHUB_OUTPUT
-            fi
-          fi
-
-      - uses: docker/login-action@v3
-        if: steps.image-fingerprint-check.outputs.changed == 'true'
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - id: meta
-        if: steps.image-fingerprint-check.outputs.changed == 'true'
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/mapchete/${{ inputs.image-name }}
-          flavor: |
-            latest=false
-          tags: |
-            # Manual Input override
-            type=raw,value=${{ inputs.image-tag }},enable=${{ inputs.image-tag != '' }}
-            
-            # RC Mode: Push only 'rc-' tag
-            type=raw,value=rc-${{ needs.prepare.outputs.calculated-tag }},enable=${{ needs.prepare.outputs.mode == 'rc' }}
-            
-            # Release Mode: Final version tag + latest
-            type=raw,value=${{ needs.prepare.outputs.calculated-tag }},enable=${{ needs.prepare.outputs.mode == 'release' || (github.ref == 'refs/heads/main' && needs.prepare.outputs.mode != 'rolling') }}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || needs.prepare.outputs.tag == 'latest' }}
-            
-            # Rolling Mode: Specific 'dev' or 'latest' from dispatch
-            type=raw,value=${{ needs.prepare.outputs.calculated-tag }},enable=${{ needs.prepare.outputs.mode == 'rolling' }}
-
-      - id: push
-        if: steps.image-fingerprint-check.outputs.changed == 'true'
-        uses: docker/build-push-action@v5
-        with:
-          context: ${{ inputs.image-name }}/
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            IMAGE_FINGERPRINT=${{ steps.image-fingerprint-check.outputs.fingerprint }}
-
       - name: Update Version Tracking Files
         if: |
           steps.image-fingerprint-check.outputs.changed == 'true' && 
@@ -238,13 +168,24 @@ jobs:
           SOURCE_VER="${{ github.event.client_payload.image_tag }}"
           FINAL_VER="${{ needs.prepare.outputs.calculated-tag }}"
           
-          # Update versions.yml
+          # 1. Update versions.yml
           sed -i "s/^${SOURCE^^}_REF:.*/${SOURCE^^}_REF: $SOURCE_VER/" versions.yml
           
-          # Initialize/Update CHANGELOG.md
-          [[ ! -f CHANGELOG.md ]] && echo -e "# Changelog\n\n" > CHANGELOG.md
-          ENTRY="## [$FINAL_VER] - RC\n- Proposed alignment: **$SOURCE** to \`$SOURCE_VER\`\n- Test Image: \`ghcr.io/mapchete/${{ inputs.image-name }}:rc-$FINAL_VER\`\n"
-          sed -i "3i $ENTRY" CHANGELOG.md
+          # 2. Update CHANGELOG.rst
+          # Calculate the length of the version string for the RST underline
+          LEN=${#FINAL_VER}
+          UNDERLINE=$(printf '%0.s-' $(seq 1 $LEN))
+          
+          # Prepare the entry
+          ENTRY="${FINAL_VER}\n${UNDERLINE}\n\n* Aligned with **${SOURCE}** @ \`${SOURCE_VER}\`.\n* Build Fingerprint: \`${{ steps.image-fingerprint-check.outputs.fingerprint }}\` \n"
+          
+          if [[ ! -f CHANGELOG.rst ]]; then
+            echo -e "Changelog\n=========\n\n$ENTRY" > CHANGELOG.rst
+          else
+            # Prepend after the main title (assuming title is on line 1 and underline on line 2)
+            # We insert at line 4 to leave a gap after the title
+            sed -i "4i $ENTRY" CHANGELOG.rst
+          fi
 
       - name: Automated Version PR
         if: |
@@ -264,7 +205,7 @@ jobs:
             **Test Image:** `ghcr.io/mapchete/${{ inputs.image-name }}:rc-${{ needs.prepare.outputs.calculated-tag }}`
             
             **Changes:**
-            - Updates `versions.yml` to pull `${{ github.event.client_payload.source_repo }}` @ `${{ github.event.client_payload.image_tag }}`.
+            - Updates `versions.yml` to pull `${{ github.event.client_payload.source_repo }}` @ `${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}`.
             
             **To Release:** Review the changes and merge this PR to `main`. The official tag will be applied upon merge.
           base: main
