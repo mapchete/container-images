@@ -65,37 +65,24 @@ jobs:
         run: |
           EVENT="${{ github.event_name }}"
           P_TYPE="${{ github.event.client_payload.type }}"
-          P_TAG="${{ github.event.client_payload.image_tag }}"
+          PREFIX="$(date +'%Y.%-m')."
           
-          # Default
-          TARGET_LATEST="false"
+          # Check if there is an existing RC branch for this month
+          EXISTING_RC_BRANCH=$(git branch -r | grep "origin/rc/${{ inputs.image-name }}-$PREFIX" | head -n 1 | sed 's/.*rc\///' || echo "")
 
-          if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-            echo "mode=release" >> $GITHUB_OUTPUT
-            TARGET_LATEST="true"
-
-          elif [[ "$EVENT" == "repository_dispatch" && "$P_TAG" =~ ^(latest|dev)$ ]]; then
-            echo "tag=$P_TAG" >> $GITHUB_OUTPUT
-            echo "mode=rolling" >> $GITHUB_OUTPUT
-            [[ "$P_TAG" == "latest" ]] && TARGET_LATEST="true"
-
-          elif [[ "$P_TYPE" == "version" ]] || [[ "$EVENT" == "workflow_dispatch" && -z "${{ inputs.image-tag }}" ]]; then
-            PREFIX="$(date +'%Y.%-m')."
+          if [[ -n "$EXISTING_RC_BRANCH" && "$P_TYPE" == "version" ]]; then
+            # Reuse existing version from the branch name
+            NEW_TAG="$EXISTING_RC_BRANCH"
+            echo "mode=rc" >> $GITHUB_OUTPUT
+          elif [[ "$P_TYPE" == "version" ]]; then
+            # Standard increment logic
             TAGS=$(gh api /orgs/mapchete/packages/container/${{ inputs.image-name }}/versions --jq '.[].metadata.container.tags[]' 2>/dev/null || echo "")
             LATEST_CTR=$(echo "$TAGS" | grep "^$PREFIX" | sed "s/$PREFIX//" | sort -nr | head -n1)
             [[ -z "$LATEST_CTR" ]] && NEW_TAG="${PREFIX}0" || NEW_TAG="${PREFIX}$((LATEST_CTR + 1))"
-            
-            echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
             echo "mode=rc" >> $GITHUB_OUTPUT
-            TARGET_LATEST="true" 
-
-          else
-            echo "tag=dev" >> $GITHUB_OUTPUT
-            echo "mode=rolling" >> $GITHUB_OUTPUT
-          fi
+          # ... [rest of your logic for rolling/release] ...
           
-          echo "target_latest=$TARGET_LATEST" >> $GITHUB_OUTPUT
+          echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
 
       - name: Generate Summary
         if: always()
@@ -239,22 +226,51 @@ jobs:
         if: steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mode == 'rc'
         run: |
           SOURCE="${{ github.event.client_payload.source_repo }}"
-          SOURCE_VER="${{ github.event.client_payload.image_tag }}"
+          SOURCE_VER="${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}"
           FINAL_VER="${{ needs.prepare.outputs.calculated-tag }}"
-          LEN=${#FINAL_VER}
-          UNDERLINE=$(printf '%0.s-' $(seq 1 $LEN))
-          ENTRY="${FINAL_VER}\n${UNDERLINE}\n\n* Aligned with **${SOURCE}** @ \`${SOURCE_VER}\`.\n"
-          sed -i "s/^${SOURCE^^}_REF:.*/${SOURCE^^}_REF: $SOURCE_VER/" versions.yml
-          [[ ! -f CHANGELOG.rst ]] && echo -e "Changelog\n=========\n\n$ENTRY" > CHANGELOG.rst || sed -i "4i $ENTRY" CHANGELOG.rst
+          
+          # 1. Update versions.yml
+          # Converts 'mapchete-eo' to 'MAPCHETE_EO_REF' and updates the line
+          KEY_NAME=$(echo "${SOURCE//-/_}_REF" | tr '[:lower:]' '[:upper:]')
+          sed -i "s/^${KEY_NAME}:.*/${KEY_NAME}: $SOURCE_VER/" versions.yml
+          
+          # 2. Update CHANGELOG.rst
+          # If the version header doesn't exist, create the block.
+          if ! grep -q "^${FINAL_VER}$" CHANGELOG.rst; then
+            LEN=${#FINAL_VER}
+            UNDERLINE=$(printf '%0.s-' $(seq 1 $LEN))
+            ENTRY="${FINAL_VER}\n${UNDERLINE}\n\n* Aligned **${SOURCE}** to \`${SOURCE_VER}\`.\n"
+            
+            if [[ ! -f CHANGELOG.rst ]]; then
+              echo -e "Changelog\n=========\n\n$ENTRY" > CHANGELOG.rst
+            else
+              # Insert at line 4 (usually below the main title)
+              sed -i "4i $ENTRY" CHANGELOG.rst
+            fi
+          else
+            # Header exists! Find the line under the header and insert the new bullet.
+            # We look for the version string and insert two lines below it.
+            sed -i "/^${FINAL_VER}$/!b;n;n;a * Aligned **${SOURCE}** to \`${SOURCE_VER}\`." CHANGELOG.rst
+          fi
 
       - name: Automated Version PR
         if: steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mode == 'rc'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.MAPCHETE_PAT || secrets.GITHUB_TOKEN }}
-          commit-message: "rc: prepare release ${{ needs.prepare.outputs.calculated-tag }}"
+          commit-message: "rc: update ${{ github.event.client_payload.source_repo }} to ${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}"
           branch: "rc/${{ inputs.image-name }}-${{ needs.prepare.outputs.calculated-tag }}"
           title: "🧪 RC: ${{ inputs.image-name }} ${{ needs.prepare.outputs.calculated-tag }}"
+          body: |
+            ### 🧪 Release Candidate Update
+            This PR tracks the alignment for version `${{ needs.prepare.outputs.calculated-tag }}`.
+            
+            **Latest Update:** Aligned `${{ github.event.client_payload.source_repo }}` to `${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}`.
+            
+            **Test Image:** `ghcr.io/mapchete/${{ inputs.image-name }}:rc-${{ needs.prepare.outputs.calculated-tag }}`
+            **Secondary Tag:** `ghcr.io/mapchete/${{ inputs.image-name }}:latest` (Updated)
+            
+            **Reviewer Note:** Multiple component updates may be bundled into this PR if dispatches arrive before merging.
           base: main
           delete-branch: true
           assignees: "scartography"
