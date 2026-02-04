@@ -296,7 +296,7 @@ jobs:
             IMAGE_FINGERPRINT=${{ steps.image-fingerprint-check.outputs.fingerprint }}
 
       - name: Update Tracking
-        if: steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mode == 'rc'
+        if: needs.prepare.outputs.mode == 'rc'
         run: |
           SOURCE="${{ github.event.client_payload.source_repo }}"
           SOURCE_VER="${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}"
@@ -330,7 +330,7 @@ jobs:
           fi
 
       - name: Automated Version PR
-        if: steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mode == 'rc'
+        if: needs.prepare.outputs.mode == 'rc'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.MAPCHETE_PAT || secrets.GITHUB_TOKEN }}
