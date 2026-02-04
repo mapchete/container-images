@@ -67,12 +67,19 @@ jobs:
           P_TYPE="${{ github.event.client_payload.type }}"
           P_TAG="${{ github.event.client_payload.image_tag }}"
           
+          # Default
+          TARGET_LATEST="false"
+
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
             echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
             echo "mode=release" >> $GITHUB_OUTPUT
+            TARGET_LATEST="true"
+
           elif [[ "$EVENT" == "repository_dispatch" && "$P_TAG" =~ ^(latest|dev)$ ]]; then
             echo "tag=$P_TAG" >> $GITHUB_OUTPUT
             echo "mode=rolling" >> $GITHUB_OUTPUT
+            [[ "$P_TAG" == "latest" ]] && TARGET_LATEST="true"
+
           elif [[ "$P_TYPE" == "version" ]] || [[ "$EVENT" == "workflow_dispatch" && -z "${{ inputs.image-tag }}" ]]; then
             PREFIX="$(date +'%Y.%-m')."
             TAGS=$(gh api /orgs/mapchete/packages/container/${{ inputs.image-name }}/versions --jq '.[].metadata.container.tags[]' 2>/dev/null || echo "")
@@ -81,10 +88,14 @@ jobs:
             
             echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
             echo "mode=rc" >> $GITHUB_OUTPUT
+            TARGET_LATEST="true" # RC builds always update latest per your requirement
+
           else
             echo "tag=dev" >> $GITHUB_OUTPUT
             echo "mode=rolling" >> $GITHUB_OUTPUT
           fi
+          
+          echo "target_latest=$TARGET_LATEST" >> $GITHUB_OUTPUT
 
       - name: Generate Summary
         if: always()
@@ -96,6 +107,15 @@ jobs:
             DECISION="## 🛑 BUILD SKIPPED"
           fi
 
+          MODE="${{ steps.version.outputs.mode }}"
+          TAG="${{ steps.version.outputs.tag }}"
+          LATEST="${{ steps.version.outputs.target_latest }}"
+          
+          # Build a visual list of tags
+          FINAL_TAGS=""
+          [[ "$MODE" == "rc" ]] && FINAL_TAGS="\`rc-$TAG\`" || FINAL_TAGS="\`$TAG\`"
+          [[ "$LATEST" == "true" ]] && FINAL_TAGS="$FINAL_TAGS, \`latest\`"
+
           echo "$DECISION" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
           echo "### 🛠️ Build Preparation Summary" >> $GITHUB_STEP_SUMMARY
@@ -104,9 +124,9 @@ jobs:
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
           echo "| **Target Image** | \`${{ inputs.image-name }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Operation Mode** | \`${{ steps.version.outputs.mode || 'N/A' }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Determined Tag** | **\`${{ steps.version.outputs.tag || 'N/A' }}\`** |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Manual Tag Input** | \`${{ inputs.image-tag || 'None' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Operation Mode** | \`${MODE || 'N/A'}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Primary Version** | \`$TAG\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Registry Tags** | **$FINAL_TAGS** |" >> $GITHUB_STEP_SUMMARY
           echo "| **Trigger Event** | \`${{ github.event_name }}\` |" >> $GITHUB_STEP_SUMMARY
           
           # 1. Repository Dispatch Details (Conditional)
@@ -186,11 +206,18 @@ jobs:
           images: ghcr.io/mapchete/${{ inputs.image-name }}
           flavor: latest=false
           tags: |
+            # 1. Manual Tag
             type=raw,value=${{ inputs.image-tag }},enable=${{ inputs.image-tag != '' }}
+            
+            # 2. Calculated Primary Tag
             type=raw,value=rc-${{ needs.prepare.outputs.calculated-tag }},enable=${{ needs.prepare.outputs.mode == 'rc' }}
-            type=raw,value=${{ needs.prepare.outputs.calculated-tag }},enable=${{ (github.ref == 'refs/heads/main' || github.ref_type == 'tag') && needs.prepare.outputs.mode != 'rc' && needs.prepare.outputs.mode != 'rolling' }}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' && needs.prepare.outputs.mode != 'rc' }}
-            type=raw,value=dev,enable=${{ (github.ref != 'refs/heads/main' && needs.prepare.outputs.mode != 'release') || needs.prepare.outputs.mode == 'rolling' }}
+            type=raw,value=${{ needs.prepare.outputs.calculated-tag }},enable=${{ needs.prepare.outputs.mode != 'rc' && needs.prepare.outputs.calculated-tag != '' }}
+            
+            # 3. The 'Latest' Logic
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.target_latest == 'true' || github.ref == 'refs/heads/main' }}
+            
+            # 4. PRs
+            type=ref,event=pr
 
       - id: push
         if: steps.image-fingerprint-check.outputs.changed == 'true'
