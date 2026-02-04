@@ -101,29 +101,48 @@ jobs:
       - id: resolve
         run: |
           # 1. Ensure we are looking at the right file
+          # If 'version' step switched branches, we are now on the RC branch
           touch versions.yml 
           
-          # 2. Extract current branch defaults
-          M_CUR=$(grep '^MAPCHETE_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n')
-          EO_CUR=$(grep '^MAPCHETE_EO_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n')
-          HUB_CUR=$(grep '^MAPCHETE_HUB_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n')
-          CLI_CUR=$(grep '^MAPCHETE_HUB_CLI_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n')
+          # 2. Extract current branch defaults (the "Truth" of the current PR)
+          # We use tr to clean up any invisible carriage returns
+          M_CUR=$(grep '^MAPCHETE_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n' || echo "main")
+          EO_CUR=$(grep '^MAPCHETE_EO_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n' || echo "main")
+          HUB_CUR=$(grep '^MAPCHETE_HUB_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n' || echo "main")
+          CLI_CUR=$(grep '^MAPCHETE_HUB_CLI_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n' || echo "main")
 
-          # 3. Resolve logic: Dispatch Override > Input Override > Branch Default
-          # This ensures the build respects the PR's state for repos NOT currently being dispatched
-          
+          # 3. Identify Dispatch Data
           D_REPO="${{ github.event.client_payload.source_repo }}"
           D_REF="${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}"
 
-          [[ "$D_REPO" == "mapchete" ]] && M_REF="$D_REF" || M_REF="${{ inputs.mapchete-ref || '$M_CUR' }}"
-          [[ "$D_REPO" == "mapchete-eo" ]] && EO_REF="$D_REF" || EO_REF="${{ inputs.mapchete-eo-ref || '$EO_CUR' }}"
-          [[ "$D_REPO" == "mapchete-hub" ]] && HUB_REF="$D_REF" || HUB_REF="${{ inputs.mapchete-hub-ref || '$HUB_CUR' }}"
-          [[ "$D_REPO" == "mapchete-hub-cli" ]] && CLI_REF="$D_REF" || CLI_REF="${{ inputs.mapchete-hub-cli-ref || '$CLI_CUR' }}"
+          # 4. Final Resolution Matrix
+          # Priority: Dispatch > Manual Input > Current Branch Value (RC) > Default (Main)
+          
+          # Mapchete
+          if [[ "$D_REPO" == "mapchete" ]]; then M_FINAL="$D_REF"
+          elif [[ -n "${{ inputs.mapchete-ref }}" ]]; then M_FINAL="${{ inputs.mapchete-ref }}"
+          else M_FINAL="$M_CUR"; fi
 
-          echo "mapchete=${M_REF:-main}" >> $GITHUB_OUTPUT
-          echo "eo=${EO_REF:-main}" >> $GITHUB_OUTPUT
-          echo "hub=${HUB_REF:-main}" >> $GITHUB_OUTPUT
-          echo "cli=${CLI_REF:-main}" >> $GITHUB_OUTPUT
+          # Mapchete-EO
+          if [[ "$D_REPO" == "mapchete-eo" ]]; then EO_FINAL="$D_REF"
+          elif [[ -n "${{ inputs.mapchete-eo-ref }}" ]]; then EO_FINAL="${{ inputs.mapchete-eo-ref }}"
+          else EO_FINAL="$EO_CUR"; fi
+
+          # Mapchete-Hub
+          if [[ "$D_REPO" == "mapchete-hub" ]]; then HUB_FINAL="$D_REF"
+          elif [[ -n "${{ inputs.mapchete-hub-ref }}" ]]; then HUB_FINAL="${{ inputs.mapchete-hub-ref }}"
+          else HUB_FINAL="$HUB_CUR"; fi
+
+          # Mapchete-Hub-CLI
+          if [[ "$D_REPO" == "mapchete-hub-cli" ]]; then CLI_FINAL="$D_REF"
+          elif [[ -n "${{ inputs.mapchete-hub-cli-ref }}" ]]; then CLI_FINAL="${{ inputs.mapchete-hub-cli-ref }}"
+          else CLI_FINAL="$CLI_CUR"; fi
+
+          # Output to GITHUB_OUTPUT for the build job
+          echo "mapchete=${M_FINAL:-main}" >> $GITHUB_OUTPUT
+          echo "eo=${EO_FINAL:-main}" >> $GITHUB_OUTPUT
+          echo "hub=${HUB_FINAL:-main}" >> $GITHUB_OUTPUT
+          echo "cli=${CLI_FINAL:-main}" >> $GITHUB_OUTPUT
 
       - name: Generate Summary
         if: always()
