@@ -44,16 +44,40 @@ jobs:
 
       - id: resolve
         run: |
-          # Load versions from versions.yml
-          MAPCHETE_DEFAULT=$(grep '^MAPCHETE_REF:' versions.yml | cut -d' ' -f2 || echo "main")
-          MAPCHETE_EO_DEFAULT=$(grep '^MAPCHETE_EO_REF:' versions.yml | cut -d' ' -f2 || echo "main")
-          MAPCHETE_HUB_DEFAULT=$(grep '^MAPCHETE_HUB_REF:' versions.yml | cut -d' ' -f2 || echo "main")
-          MAPCHETE_HUB_CLI_DEFAULT=$(grep '^MAPCHETE_HUB_CLI_REF:' versions.yml | cut -d' ' -f2 || echo "main")
+          # 1. Load default versions from the versions.yml file
+          MAPCHETE_DEFAULT_VAL=$(grep '^MAPCHETE_REF:' versions.yml | cut -d' ' -f2)
+          MAPCHETE_EO_DEFAULT_VAL=$(grep '^MAPCHETE_EO_REF:' versions.yml | cut -d' ' -f2)
+          MAPCHETE_HUB_DEFAULT_VAL=$(grep '^MAPCHETE_HUB_REF:' versions.yml | cut -d' ' -f2)
+          MAPCHETE_HUB_CLI_DEFAULT_VAL=$(grep '^MAPCHETE_HUB_CLI_REF:' versions.yml | cut -d' ' -f2)
 
-          echo "mapchete=${{ inputs.mapchete-ref || (github.event.client_payload.source_repo == 'mapchete' && github.event.client_payload.sha) || '$MAPCHETE_DEFAULT' }}" >> $GITHUB_OUTPUT
-          echo "eo=${{ inputs.mapchete-eo-ref || (github.event.client_payload.source_repo == 'mapchete-eo' && github.event.client_payload.sha) || '$MAPCHETE_EO_DEFAULT' }}" >> $GITHUB_OUTPUT
-          echo "hub=${{ inputs.mapchete-hub-ref || (github.event.client_payload.source_repo == 'mapchete-hub' && github.event.client_payload.sha) || '$MAPCHETE_HUB_DEFAULT' }}" >> $GITHUB_OUTPUT
-          echo "cli=${{ inputs.mapchete-hub-cli-ref || (github.event.client_payload.source_repo == 'mapchete-hub-cli' && github.event.client_payload.sha) || '$MAPCHETE_HUB_CLI_DEFAULT' }}" >> $GITHUB_OUTPUT
+          # 2. Extract values from the repository_dispatch payload if they exist
+          DISPATCH_REPO="${{ github.event.client_payload.source_repo }}"
+          # Prioritize image_tag (versioning) over sha (development commits)
+          DISPATCH_REF="${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}"
+
+          # 3. Resolve final references using a strict priority order:
+          # Manual Input > Matching Repository Dispatch > versions.yml Default
+          
+          if [[ -n "${{ inputs.mapchete-ref }}" ]]; then M_REF="${{ inputs.mapchete-ref }}"
+          elif [[ "$DISPATCH_REPO" == "mapchete" ]]; then M_REF="$DISPATCH_REF"
+          else M_REF="$MAPCHETE_DEFAULT_VAL"; fi
+
+          if [[ -n "${{ inputs.mapchete-eo-ref }}" ]]; then EO_REF="${{ inputs.mapchete-eo-ref }}"
+          elif [[ "$DISPATCH_REPO" == "mapchete-eo" ]]; then EO_REF="$DISPATCH_REF"
+          else EO_REF="$MAPCHETE_EO_DEFAULT_VAL"; fi
+
+          if [[ -n "${{ inputs.mapchete-hub-ref }}" ]]; then HUB_REF="${{ inputs.mapchete-hub-ref }}"
+          elif [[ "$DISPATCH_REPO" == "mapchete-hub" ]]; then HUB_REF="$DISPATCH_REF"
+          else HUB_REF="$MAPCHETE_HUB_DEFAULT_VAL"; fi
+
+          if [[ -n "${{ inputs.mapchete-hub-cli-ref }}" ]]; then CLI_REF="${{ inputs.mapchete-hub-cli-ref }}"
+          elif [[ "$DISPATCH_REPO" == "mapchete-hub-cli" ]]; then CLI_REF="$DISPATCH_REF"
+          else CLI_REF="$MAPCHETE_HUB_CLI_DEFAULT_VAL"; fi
+
+          echo "mapchete=$M_REF" >> $GITHUB_OUTPUT
+          echo "eo=$EO_REF" >> $GITHUB_OUTPUT
+          echo "hub=$HUB_REF" >> $GITHUB_OUTPUT
+          echo "cli=$CLI_REF" >> $GITHUB_OUTPUT
 
   build:
     needs: prepare
@@ -142,6 +166,7 @@ jobs:
             latest=false
           tags: |
             type=raw,value=${{ inputs.image-tag }},enable=${{ inputs.image-tag != '' }}
+            type=raw,value=${{ github.event.client_payload.image_tag }},enable=${{ github.event_name == 'repository_dispatch' && github.event.client_payload.image_tag != '' && github.event.client_payload.image_tag != 'latest' && github.event.client_payload.image_tag != 'dev' }}            
             type=ref,event=tag
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || (github.event_name == 'repository_dispatch' && github.event.client_payload.image_tag == 'latest') }}
             type=raw,value=dev,enable=${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || (github.event_name == 'repository_dispatch' && (github.event.client_payload.image_tag == 'dev' || github.event.client_payload.image_tag == 'latest')) }}
@@ -180,7 +205,7 @@ jobs:
           body: |
             Automated update from `${{ github.event.client_payload.source_repo }}`.
             - **New Version:** `${{ github.event.client_payload.image_tag }}`
-            - **Image Fingerprint:** `${{ steps.image-fingerprint-check.outputs.fingerprint }}`
+            - **Fingerprint:** `${{ steps.image-fingerprint-check.outputs.fingerprint }}`
           base: main
           delete-branch: true
           assignees: "scartography"
