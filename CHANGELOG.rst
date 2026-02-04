@@ -2,7 +2,16 @@
 Changelog
 #########
 
+2026.2.0 - 2026-02-04
+---------------------
 
+* Aligned **mapchete** to `2026.2.1`
+* Aligned **mapchete-eo** to `2026.2.0`
+* Aligned **mapchete-hub** to `2025.11.0`
+
+* Aligned **mapchete** to `2026.2.1`
+* Aligned **mapchete-eo** to `2026.2.0`
+* Aligned **mapchete-hub** to `2025.11.0`
 ---------------------
 2026.1.1 - 2026-01-12
 ---------------------
@@ -13,7 +22,6 @@ Changelog
 
     * `aiobotocore` to `>=1.1.2,<3.0.0`
 
-
 ---------------------
 2026.1.0 - 2026-01-09
 ---------------------
@@ -23,7 +31,6 @@ Changelog
   * `mapchete`
 
     * `mapchete-eo` to `2026.1.0`
-
 
 ----------------------
 2025.11.0 - 2025-11-20
@@ -42,7 +49,6 @@ Changelog
     * `distributed` to `2025.11.0`
     * `fastapi` to `0.121.3`
 
-
 ----------------------
 2025.10.0 - 2025-10-14
 ----------------------
@@ -51,7 +57,6 @@ Changelog
 
   * `mapchete`: updated `mapchete` to `2025.10.1`
   * `mapchete`: updated `mapchete-eo` to `2025.10.1`
-
 
 ---------------------
 2025.9.2 - 2025-09-26
@@ -65,7 +70,6 @@ Changelog
 
   * fixed image build on tagged releases
 
-
 ---------------------
 2025.9.1 - 2025-09-02
 ---------------------
@@ -73,7 +77,6 @@ Changelog
 * images
 
     * added `mhub-cli-light` and `mhub-cli-full` images (#3)
-
 
 ---------------------
 2025.9.0 - 2025-09-02
@@ -91,7 +94,6 @@ Changelog
 
   * ``mapchete-eo`` to ``2025.8.3``
 
-
 ---------------------
 2025.8.1 - 2025-08-14
 ---------------------
@@ -104,7 +106,6 @@ Changelog
 
   * keep ``uv`` installed for further use
   * make ``/app`` the working directory
-
 
 ---------------------
 2025.8.0 - 2025-08-12
