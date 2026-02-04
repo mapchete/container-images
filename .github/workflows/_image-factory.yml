@@ -208,16 +208,37 @@ jobs:
       - name: Image Fingerprint Check
         id: image-fingerprint-check
         run: |
-          LOCAL_FINGERPRINT=$(docker run --rm --entrypoint /bin/sh local-test-image:latest -c "cat /app/uv_fingerprint" | tr -d '\r\n ')
-          echo "fingerprint=$LOCAL_FINGERPRINT" >> $GITHUB_OUTPUT
-          if [[ "${{ github.event_name }}" == "repository_dispatch" && "${{ github.event.client_payload.type }}" == "version" ]]; then
-            echo "changed=true" >> $GITHUB_OUTPUT
-          else
+          # 1. Extract local fingerprint from the just-built image
+          LOCAL_FP=$(docker run --rm --entrypoint /bin/sh local-test-image:latest -c "cat /app/uv_fingerprint" | tr -d '\r\n ')
+          echo "fingerprint=$LOCAL_FP" >> $GITHUB_OUTPUT
+
+          # 2. Determine the most relevant remote tag for comparison
+          MODE="${{ needs.prepare.outputs.mode }}"
+          VER="${{ needs.prepare.outputs.calculated-tag }}"
+          
+          if [[ "$MODE" == "rc" ]]; then
+            REMOTE_TAG="rc-$VER"
+          elif [[ "$MODE" == "release" ]]; then
+            REMOTE_TAG="$VER"
+          elif [[ "${{ github.ref_name }}" == "main" ]]; then
             REMOTE_TAG="latest"
-            [[ "${{ github.ref_name }}" != "main" ]] && REMOTE_TAG="dev"
-            INSPECT_JSON=$(skopeo inspect docker://ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG 2>/dev/null || echo '{"Labels":{}}')
-            REMOTE_FINGERPRINT=$(echo "$INSPECT_JSON" | jq -r '.Labels["org.mapchete.image_fingerprint"] // "none"' | tr -d '\r\n ')
-            [[ "$LOCAL_FINGERPRINT" == "$REMOTE_FINGERPRINT" ]] && echo "changed=false" >> $GITHUB_OUTPUT || echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            REMOTE_TAG="dev"
+          fi
+
+          echo "🔍 Mode: $MODE | Comparing local against: ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG"
+
+          # 3. Perform the comparison
+          # We use skopeo to peek at the remote labels without pulling the whole image
+          INSPECT_JSON=$(skopeo inspect docker://ghcr.io/mapchete/${{ inputs.image-name }}:$REMOTE_TAG 2>/dev/null || echo '{"Labels":{}}')
+          REMOTE_FP=$(echo "$INSPECT_JSON" | jq -r '.Labels["org.mapchete.image_fingerprint"] // "none"' | tr -d '\r\n ')
+
+          if [[ "$LOCAL_FP" == "$REMOTE_FP" ]]; then
+            echo "✅ Fingerprint Match: The remote image is already up-to-date."
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ Fingerprint Mismatch: Code or environment has changed."
+            echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
       - name: Integration Tests
