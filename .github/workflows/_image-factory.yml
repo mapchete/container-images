@@ -56,29 +56,39 @@ jobs:
         run: |
           EVENT="${{ github.event_name }}"
           P_TYPE="${{ github.event.client_payload.type }}"
+          P_TAG="${{ github.event.client_payload.image_tag }}"
           PREFIX="$(date +'%Y.%-m')."
           
-          # 1. Fetch all remote branches so the runner knows about existing RCs
           git fetch origin 
-          
-          # 2. Look for an existing RC branch for this month
-          # Note: We look for origin/rc/... but strip 'origin/' for the checkout
-          EXIST_RC=$(git branch -r | grep "origin/rc/${{ inputs.image-name }}-$PREFIX" | head -n 1 | sed 's|.*origin/||' || echo "")
-          
-          if [[ "$P_TYPE" == "version" ]] || [[ "$EVENT" == "workflow_dispatch" && -z "${{ inputs.image-tag }}" ]]; then
+
+          # 1. FINAL RELEASE (Git Tag)
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            MODE="release"
+            TAG_NAME="${{ github.ref_name }}"
+            USE_BRANCH="${{ github.ref_name }}"
+            TARGET_LATEST="true"
+
+          # 2. RELEASE CANDIDATE (Dispatch or Manual RC)
+          elif [[ "$P_TYPE" == "version" ]] || [[ "$EVENT" == "workflow_dispatch" && -z "${{ inputs.image-tag }}" ]]; then
             MODE="rc"
             TARGET_LATEST="true"
+            EXIST_RC=$(git branch -r | grep "origin/rc/${{ inputs.image-name }}-$PREFIX" | head -n 1 | sed 's|.*origin/||' || echo "")
             if [[ -n "$EXIST_RC" ]]; then
               USE_BRANCH="$EXIST_RC"
               TAG_NAME=$(echo "$EXIST_RC" | sed 's/.*-//')
             else
-              # Standard increment logic for new RC
               TAGS=$(gh api /orgs/mapchete/packages/container/${{ inputs.image-name }}/versions --jq '.[].metadata.container.tags[]' 2>/dev/null || echo "")
               LATEST_CTR=$(echo "$TAGS" | grep "^$PREFIX" | sed "s/$PREFIX//" | sort -nr | head -n1)
               [[ -z "$LATEST_CTR" ]] && TAG_NAME="${PREFIX}0" || TAG_NAME="${PREFIX}$((LATEST_CTR + 1))"
-              USE_BRANCH="${{ github.ref_name }}" # Will create new branch from main
+              USE_BRANCH="${{ github.ref_name }}"
             fi
-          # ... (rest of release/rolling logic) ...
+
+          # 3. PULL REQUESTS & DEV BUILDS
+          else
+            MODE="dev"
+            TAG_NAME="dev"
+            USE_BRANCH="${{ github.head_ref || github.ref_name }}"
+            TARGET_LATEST="false"
           fi
 
           echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
