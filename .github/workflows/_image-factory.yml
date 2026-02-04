@@ -339,11 +339,11 @@ jobs:
       - name: Update Tracking
         if: needs.prepare.outputs.mode == 'rc'
         run: |
-          # 1. Setup Variables
+          # 1. Setup Variables & Export Date
           PUSH_DATE=$(date +'%Y-%m-%d')
           echo "PUSH_DATE=$PUSH_DATE" >> $GITHUB_ENV
           
-          # Determine the Truth based on build status
+          # 2. Select the Truth (New build vs Remote Image)
           if [[ "${{ steps.image-fingerprint-check.outputs.changed }}" == "true" ]]; then
             M_REF="${{ needs.prepare.outputs.mapchete-ref }}"
             EO_REF="${{ needs.prepare.outputs.mapchete-eo-ref }}"
@@ -356,60 +356,65 @@ jobs:
             C_REF="${{ steps.image-fingerprint-check.outputs.cli_ref }}"
           fi
           
-          SOURCE="${{ github.event.client_payload.source_repo }}"
           FINAL_VER="${{ needs.prepare.outputs.calculated-tag }}"
           
-          # 2. Rebuild versions.yml from scratch (Guarantees no missing updates)
-          cat <<EOF > versions.yml
-          MAPCHETE_REF: $M_REF
-          MAPCHETE_EO_REF: $EO_REF
-          MAPCHETE_HUB_REF: $H_REF
-          MAPCHETE_HUB_CLI_REF: $C_REF
-          EOF
+          # 3. Rebuild versions.yml (ONLY if reference is valid)
+          # We check for empty, 'null', or 'N/A'
+          is_valid() { [[ -n "$1" && "$1" != "null" && "$1" != "N/A" ]]; }
 
-          # 3. Update CHANGELOG.rst (Surgical Deduplication)
+          > versions.yml
+          is_valid "$M_REF" && echo "MAPCHETE_REF: $M_REF" >> versions.yml
+          is_valid "$EO_REF" && echo "MAPCHETE_EO_REF: $EO_REF" >> versions.yml
+          is_valid "$H_REF" && echo "MAPCHETE_HUB_REF: $H_REF" >> versions.yml
+          is_valid "$C_REF" && echo "MAPCHETE_HUB_CLI_REF: $C_REF" >> versions.yml
+
+          # 4. Update CHANGELOG.rst (Atomic Rebuild)
           if grep -q "^${FINAL_VER}" CHANGELOG.rst; then
             START_LN=$(grep -n "^${FINAL_VER}" CHANGELOG.rst | head -n 1 | cut -d: -f1)
             END_LN=$(tail -n +$((START_LN + 1)) CHANGELOG.rst | grep -n -m 1 "^[0-9]" | cut -d: -f1)
-            
-            if [ -z "$END_LN" ]; then
-                END_LN=$(wc -l < CHANGELOG.rst)
-            else
-                END_LN=$((START_LN + END_LN - 1))
-            fi
+            [ -z "$END_LN" ] && END_LN=$(wc -l < CHANGELOG.rst) || END_LN=$((START_LN + END_LN - 1))
 
-            sed -n "${START_LN},${END_LN}p" CHANGELOG.rst > block.tmp
+            # Extract the block and remove all previous "Aligned" lines
+            sed -n "${START_LN},${END_LN}p" CHANGELOG.rst | grep -v "\* Aligned" > block_clean.tmp
             
-            # Wipe all "Aligned" bullets in this block to rebuild from current truth
-            # This prevents stacking AND handles the source update in one go
-            grep -v "\* Aligned" block.tmp > block_clean.tmp
+            # Reconstruct bullets based on what's valid
+            NEW_BULLETS=""
+            is_valid "$M_REF" && NEW_BULLETS="${NEW_BULLETS}* Aligned **mapchete** to \`$M_REF\`\n"
+            is_valid "$EO_REF" && NEW_BULLETS="${NEW_BULLETS}* Aligned **mapchete-eo** to \`$EO_REF\`\n"
+            is_valid "$H_REF" && NEW_BULLETS="${NEW_BULLETS}* Aligned **mapchete-hub** to \`$H_REF\`\n"
+            is_valid "$C_REF" && NEW_BULLETS="${NEW_BULLETS}* Aligned **mapchete-hub-cli** to \`$C_REF\`\n"
             
-            # Re-insert the 4 bullets (No trailing dots)
-            BULLETS="* Aligned **mapchete** to \`$M_REF\`\n* Aligned **mapchete-eo** to \`$EO_REF\`\n* Aligned **mapchete-hub** to \`$H_REF\`\n* Aligned **mapchete-hub-cli** to \`$C_REF\`"
-            sed -i "4i ${BULLETS}" block_clean.tmp
+            # Insert Bullets 4 lines in (Title, Underline, Blank, HERE)
+            # Use a temporary file for the bullets to handle multi-line sed safely
+            printf "$NEW_BULLETS" > bullets.tmp
+            sed -i "4r bullets.tmp" block_clean.tmp
             
-            # Reassemble
+            # Reassemble File
             head -n $((START_LN - 1)) CHANGELOG.rst > changelog.new
             cat block_clean.tmp >> changelog.new
             tail -n +$((END_LN + 1)) CHANGELOG.rst >> changelog.new
             mv changelog.new CHANGELOG.rst
             
-            # Update Header/Underline
+            # Refresh Header & Underline
             TITLE="${FINAL_VER} - ${PUSH_DATE}"
             LEN=${#TITLE}
             UNDERLINE=$(printf '%0.s-' $(seq 1 $LEN))
             sed -i "${START_LN}s|.*|${TITLE}|" CHANGELOG.rst
             sed -i "$((START_LN + 1))s|.*|${UNDERLINE}|" CHANGELOG.rst
-            
           else
+            # New Block logic...
             TITLE="${FINAL_VER} - ${PUSH_DATE}"
             LEN=${#TITLE}
             UNDERLINE=$(printf '%0.s-' $(seq 1 $LEN))
-            BLOCK="${TITLE}\n${UNDERLINE}\n\n* Aligned **mapchete** to \`$M_REF\`\n* Aligned **mapchete-eo** to \`$EO_REF\`\n* Aligned **mapchete-hub** to \`$H_REF\`\n* Aligned **mapchete-hub-cli** to \`$C_REF\`\n"
+            BLOCK="${TITLE}\n${UNDERLINE}\n\n"
+            is_valid "$M_REF" && BLOCK="${BLOCK}* Aligned **mapchete** to \`$M_REF\`\n"
+            is_valid "$EO_REF" && BLOCK="${BLOCK}* Aligned **mapchete-eo** to \`$EO_REF\`\n"
+            is_valid "$H_REF" && BLOCK="${BLOCK}* Aligned **mapchete-hub** to \`$H_REF\`\n"
+            is_valid "$C_REF" && BLOCK="${BLOCK}* Aligned **mapchete-hub-cli** to \`$C_REF\`\n"
             sed -i "4i ${BLOCK}" CHANGELOG.rst
           fi
-
-          # Final Cleanup
+          
+          # Final Sanity
           sed -i 's/[[:space:]]*$//' CHANGELOG.rst
 
       - name: Automated Version PR
@@ -433,10 +438,10 @@ jobs:
             #### 📦 Live Component Alignment
             | Component | Reference |
             | :--- | :--- |
-            | **mapchete** | `${{ steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mapchete-ref || steps.image-fingerprint-check.outputs.m_ref }}` |
-            | **mapchete-eo** | `${{ steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mapchete-eo-ref || steps.image-fingerprint-check.outputs.eo_ref }}` |
-            | **mapchete-hub** | `${{ steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mapchete-hub-ref || steps.image-fingerprint-check.outputs.hub_ref }}` |
-            | **mapchete-hub-cli** | `${{ steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mapchete-hub-cli-ref || steps.image-fingerprint-check.outputs.cli_ref }}` |
+            | **mapchete** | `${{ steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mapchete-ref || steps.image-fingerprint-check.outputs.m_ref }}` || 'N/A') }}` |
+            | **mapchete-eo** | `${{ steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mapchete-eo-ref || steps.image-fingerprint-check.outputs.eo_ref }}` || 'N/A') }}` |
+            | **mapchete-hub** | `${{ steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mapchete-hub-ref || steps.image-fingerprint-check.outputs.hub_ref }}` || 'N/A') }}` |
+            | **mapchete-hub-cli** | `${{ steps.image-fingerprint-check.outputs.changed == 'true' && (needs.prepare.outputs.mapchete-hub-cli-ref || 'N/A') || (steps.image-fingerprint-check.outputs.cli_ref || 'N/A') }}` |
 
             > **Note:** These versions reflect the actual state of the image at `ghcr.io/mapchete/${{ inputs.image-name }}:rc-${{ needs.prepare.outputs.calculated-tag }}`.
             
