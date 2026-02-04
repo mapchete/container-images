@@ -61,25 +61,40 @@ jobs:
           echo "cli=${{ inputs.mapchete-hub-cli-ref || (github.event.client_payload.source_repo == 'mapchete-hub-cli' && (github.event.client_payload.image_tag || github.event.client_payload.sha)) || '$CLI_DEF' }}" >> $GITHUB_OUTPUT
 
       - id: version
-        name: Calculate Image Version (Year.Month.Counter)
+        name: Calculate Image Tag and Mode
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [[ "${{ github.event_name }}" == "repository_dispatch" && "${{ github.event.client_payload.type }}" == "version" ]]; then
+          # Variables for clarity
+          EVENT="${{ github.event_name }}"
+          P_TYPE="${{ github.event.client_payload.type }}"
+          P_TAG="${{ github.event.client_payload.image_tag }}"
+          
+          # 1. FINAL RELEASE: Manual Git Tag on container-images repo
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "mode=release" >> $GITHUB_OUTPUT
+
+          # 2. ROLLING: Dispatch requested 'latest' or 'dev' specifically
+          elif [[ "$EVENT" == "repository_dispatch" && "$P_TAG" =~ ^(latest|dev)$ ]]; then
+            echo "tag=$P_TAG" >> $GITHUB_OUTPUT
+            echo "mode=rolling" >> $GITHUB_OUTPUT
+
+          # 3. RELEASE CANDIDATE: Version Dispatch or Manual run (no tag provided)
+          elif [[ "$P_TYPE" == "version" ]] || [[ "$EVENT" == "workflow_dispatch" && -z "${{ inputs.image-tag }}" ]]; then
             PREFIX="$(date +'%Y.%-m')."
-            # Fetch tags for the specific image from GHCR
             TAGS=$(gh api /orgs/mapchete/packages/container/${{ inputs.image-name }}/versions --jq '.[].metadata.container.tags[]' 2>/dev/null || echo "")
-            # Find the highest counter for the current Year.Month
             LATEST_CTR=$(echo "$TAGS" | grep "^$PREFIX" | sed "s/$PREFIX//" | sort -nr | head -n1)
             
-            if [[ -z "$LATEST_CTR" ]]; then
-              NEW_TAG="${PREFIX}0"
-            else
-              NEW_TAG="${PREFIX}$((LATEST_CTR + 1))"
-            fi
+            if [[ -z "$LATEST_CTR" ]]; then NEW_TAG="${PREFIX}0"; else NEW_TAG="${PREFIX}$((LATEST_CTR + 1))"; fi
+            
             echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
+            echo "mode=rc" >> $GITHUB_OUTPUT
+            
           else
-            echo "tag=" >> $GITHUB_OUTPUT
+            # 4. DEFAULT/FALLBACK
+            echo "tag=dev" >> $GITHUB_OUTPUT
+            echo "mode=rolling" >> $GITHUB_OUTPUT
           fi
 
       - name: Generate Summary
@@ -175,23 +190,18 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            # 1. Manual/Override (Highest priority)
+            # Manual Input override
             type=raw,value=${{ inputs.image-tag }},enable=${{ inputs.image-tag != '' }}
             
-            # 2. Release Candidate (Only for version dispatches)
-            type=raw,value=rc-${{ needs.prepare.outputs.calculated-tag }},enable=${{ github.event_name == 'repository_dispatch' && github.event.client_payload.type == 'version' }}
+            # RC Mode: Push only 'rc-' tag
+            type=raw,value=rc-${{ needs.prepare.outputs.calculated-tag }},enable=${{ needs.prepare.outputs.mode == 'rc' }}
             
-            # 3. Final Release Tag (Applied on Merge to main OR manual Git Tag)
-            # This uses the calculated Year.Month.Counter when on main
-            type=raw,value=${{ needs.prepare.outputs.calculated-tag }},enable=${{ github.ref == 'refs/heads/main' && needs.prepare.outputs.calculated-tag != '' }}
-            type=ref,event=tag
+            # Release Mode: Final version tag + latest
+            type=raw,value=${{ needs.prepare.outputs.calculated-tag }},enable=${{ needs.prepare.outputs.mode == 'release' || (github.ref == 'refs/heads/main' && needs.prepare.outputs.mode != 'rolling') }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || needs.prepare.outputs.tag == 'latest' }}
             
-            # 4. Rolling Tags
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=dev,enable=${{ (github.event_name == 'repository_dispatch' && github.event.client_payload.type == 'dev') || github.ref != 'refs/heads/main' }}
-            
-            # 5. Standard PR numbering
-            type=ref,event=pr
+            # Rolling Mode: Specific 'dev' or 'latest' from dispatch
+            type=raw,value=${{ needs.prepare.outputs.calculated-tag }},enable=${{ needs.prepare.outputs.mode == 'rolling' }}
 
       - id: push
         if: steps.image-fingerprint-check.outputs.changed == 'true'
@@ -207,8 +217,7 @@ jobs:
       - name: Update Version Tracking Files
         if: |
           steps.image-fingerprint-check.outputs.changed == 'true' && 
-          github.event_name == 'repository_dispatch' && 
-          github.event.client_payload.type == 'version'
+          needs.prepare.outputs.mode == 'rc'
         run: |
           SOURCE="${{ github.event.client_payload.source_repo }}"
           SOURCE_VER="${{ github.event.client_payload.image_tag }}"
@@ -225,8 +234,7 @@ jobs:
       - name: Automated Version PR
         if: |
           steps.image-fingerprint-check.outputs.changed == 'true' && 
-          github.event_name == 'repository_dispatch' && 
-          github.event.client_payload.type == 'version'
+          needs.prepare.outputs.mode == 'rc'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.MAPCHETE_PAT || secrets.GITHUB_TOKEN }}
