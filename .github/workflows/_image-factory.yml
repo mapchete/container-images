@@ -222,6 +222,7 @@ jobs:
           REMOTE_FP=$(echo "$INSPECT_JSON" | jq -r '.Labels["org.mapchete.image_fingerprint"] // "none"' | tr -d '\r\n ')
 
           if [[ "$LOCAL_FP" == "$REMOTE_FP" ]]; then
+            echo "✅ Fingerprint Match. Image is up to date."
             echo "changed=false" >> $GITHUB_OUTPUT
             if [[ "$MODE" == "rc" ]]; then
               docker pull $REMOTE_IMAGE
@@ -232,6 +233,7 @@ jobs:
               echo "cli_ref=$(get_ver mapchete-hub-cli)" >> $GITHUB_OUTPUT
             fi
           else
+            echo "⚠️ Fingerprint Mismatch. Build required."
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
