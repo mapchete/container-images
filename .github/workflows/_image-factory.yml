@@ -286,41 +286,29 @@ jobs:
         run: |
           PUSH_DATE=$(date +'%Y-%m-%d'); echo "PUSH_DATE=$PUSH_DATE" >> $GITHUB_ENV
           if [[ "${{ steps.image-fingerprint-check.outputs.changed }}" == "true" ]]; then
-            M_REF="${{ needs.prepare.outputs.mapchete-ref }}"
-            EO_REF="${{ needs.prepare.outputs.mapchete-eo-ref }}"
-            H_REF="${{ needs.prepare.outputs.mapchete-hub-ref }}"
-            C_REF="${{ needs.prepare.outputs.mapchete-hub-cli-ref }}"
+            M_REF="${{ needs.prepare.outputs.mapchete-ref }}"; EO_REF="${{ needs.prepare.outputs.mapchete-eo-ref }}"
+            H_REF="${{ needs.prepare.outputs.mapchete-hub-ref }}"; C_REF="${{ needs.prepare.outputs.mapchete-hub-cli-ref }}"
           else
-            M_REF="${{ steps.image-fingerprint-check.outputs.m_ref }}"
-            EO_REF="${{ steps.image-fingerprint-check.outputs.eo_ref }}"
-            H_REF="${{ steps.image-fingerprint-check.outputs.hub_ref }}"
-            C_REF="${{ steps.image-fingerprint-check.outputs.cli_ref }}"
+            M_REF="${{ steps.image-fingerprint-check.outputs.m_ref }}"; EO_REF="${{ steps.image-fingerprint-check.outputs.eo_ref }}"
+            H_REF="${{ steps.image-fingerprint-check.outputs.hub_ref }}"; C_REF="${{ steps.image-fingerprint-check.outputs.cli_ref }}"
           fi
-          FINAL_VER="${{ needs.prepare.outputs.calculated-tag }}"
           is_valid() { [[ -n "$1" && "$1" != "null" && "$1" != "N/A" ]]; }
+          TARGET_YML="$(pwd)/versions.yml"
+          echo "MAPCHETE_REF: $M_REF" > "$TARGET_YML"
+          is_valid "$EO_REF" && echo "MAPCHETE_EO_REF: $EO_REF" >> "$TARGET_YML"
+          is_valid "$H_REF" && echo "MAPCHETE_HUB_REF: $H_REF" >> "$TARGET_YML"
+          is_valid "$C_REF" && echo "MAPCHETE_HUB_CLI_REF: $C_REF" >> "$TARGET_YML"
           
-          # versions.yml rebuild
-          > versions.yml
-          is_valid "$M_REF" && echo "MAPCHETE_REF: $M_REF" >> versions.yml
-          is_valid "$EO_REF" && echo "MAPCHETE_EO_REF: $EO_REF" >> versions.yml
-          is_valid "$H_REF" && echo "MAPCHETE_HUB_REF: $H_REF" >> versions.yml
-          is_valid "$C_REF" && echo "MAPCHETE_HUB_CLI_REF: $C_REF" >> versions.yml
-
-          # changelog rebuild
+          FINAL_VER="${{ needs.prepare.outputs.calculated-tag }}"
           if grep -q "^${FINAL_VER}" CHANGELOG.rst; then
             START_LN=$(grep -n "^${FINAL_VER}" CHANGELOG.rst | head -n 1 | cut -d: -f1)
             END_LN=$(tail -n +$((START_LN + 1)) CHANGELOG.rst | grep -n -m 1 "^[0-9]" | cut -d: -f1)
             [ -z "$END_LN" ] && END_LN=$(wc -l < CHANGELOG.rst) || END_LN=$((START_LN + END_LN - 1))
             sed -n "${START_LN},${END_LN}p" CHANGELOG.rst | grep -v "\* Aligned" > block_clean.tmp
-            {
-              is_valid "$M_REF" && echo "* Aligned **mapchete** to \`$M_REF\`"
-              is_valid "$EO_REF" && echo "* Aligned **mapchete-eo** to \`$EO_REF\`"
-              is_valid "$H_REF" && echo "* Aligned **mapchete-hub** to \`$H_REF\`"
-              is_valid "$C_REF" && echo "* Aligned **mapchete-hub-cli** to \`$C_REF\`"
-            } > bullets.tmp
+            { is_valid "$M_REF" && echo "* Aligned **mapchete** to \`$M_REF\`"; is_valid "$EO_REF" && echo "* Aligned **mapchete-eo** to \`$EO_REF\`";
+              is_valid "$H_REF" && echo "* Aligned **mapchete-hub** to \`$H_REF\`"; is_valid "$C_REF" && echo "* Aligned **mapchete-hub-cli** to \`$C_REF\`"; } > bullets.tmp
             sed -i "4r bullets.tmp" block_clean.tmp
-            head -n $((START_LN - 1)) CHANGELOG.rst > changelog.new; cat block_clean.tmp >> changelog.new
-            tail -n +$((END_LN + 1)) CHANGELOG.rst >> changelog.new; mv changelog.new CHANGELOG.rst
+            head -n $((START_LN - 1)) CHANGELOG.rst > changelog.new; cat block_clean.tmp >> changelog.new; tail -n +$((END_LN + 1)) CHANGELOG.rst >> changelog.new; mv changelog.new CHANGELOG.rst
             TITLE="${FINAL_VER} - ${PUSH_DATE}"; LEN=${#TITLE}; UNDERLINE=$(printf '%0.s-' $(seq 1 $LEN))
             sed -i "${START_LN}s|.*|${TITLE}|" CHANGELOG.rst; sed -i "$((START_LN + 1))s|.*|${UNDERLINE}|" CHANGELOG.rst
           fi
@@ -338,15 +326,23 @@ jobs:
           title: "🧪 RC: ${{ inputs.image-name }} ${{ needs.prepare.outputs.calculated-tag }}"
           body: |
             ### 🧪 Release Candidate Update
-            **Status:** ${{ steps.image-fingerprint-check.outputs.changed == 'true' && '🚀 New Image Pushed' || '✅ Reusing Image' }}
-            
-            #### 📦 Component Alignment
+            This PR tracks the component alignment for version `${{ needs.prepare.outputs.calculated-tag }}`.
+
+            **Build Status:** ${{ steps.image-fingerprint-check.outputs.changed == 'true' && '🚀 New Image Pushed' || '✅ Fingerprint Match - Reusing Existing Image' }}
+            **Push Date:** `${{ env.PUSH_DATE }}`
+
+            #### 📦 Live Component Alignment
             | Component | Reference |
             | :--- | :--- |
             | **mapchete** | `${{ (steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mapchete-ref) || steps.image-fingerprint-check.outputs.m_ref || 'N/A' }}` |
             | **mapchete-eo** | `${{ (steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mapchete-eo-ref) || steps.image-fingerprint-check.outputs.eo_ref || 'N/A' }}` |
             | **mapchete-hub** | `${{ (steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mapchete-hub-ref) || steps.image-fingerprint-check.outputs.hub_ref || 'N/A' }}` |
             | **mapchete-hub-cli** | `${{ (steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mapchete-hub-cli-ref) || steps.image-fingerprint-check.outputs.cli_ref || 'N/A' }}` |
+
+            > **Note:** These versions reflect the actual state of the image at `ghcr.io/mapchete/${{ inputs.image-name }}:rc-${{ needs.prepare.outputs.calculated-tag }}`.
+            
+            ---
+            *Latest Update Triggered by:* **${{ github.event.client_payload.source_repo }}**            
           base: main
           delete-branch: true
 
