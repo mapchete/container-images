@@ -403,15 +403,22 @@ jobs:
             **Build Status:** ${{ steps.image-fingerprint-check.outputs.changed == 'true' && '🚀 New Image Pushed' || '✅ Reusing Existing Image' }}
             **Push Date:** `${{ env.PUSH_DATE }}`
             
-            #### 📦 Release Track Pins
+            #### 📦 Component Alignment (Release Track)
             | Component | Reference |
             | :--- | :--- |
-            | **mapchete** | `${{ (steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mapchete-ref) || steps.image-fingerprint-check.outputs.m_ref || 'N/A' }}` |
-            | **mapchete-eo** | `${{ (steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mapchete-eo-ref) || steps.image-fingerprint-check.outputs.eo_ref || 'N/A' }}` |
-            | **mapchete-hub** | `${{ (steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mapchete-hub-ref) || steps.image-fingerprint-check.outputs.hub_ref || 'N/A' }}` |
-            | **mapchete-hub-cli** | `${{ (steps.image-fingerprint-check.outputs.changed == 'true' && needs.prepare.outputs.mapchete-hub-cli-ref) || steps.image-fingerprint-check.outputs.cli_ref || 'N/A' }}` |
+            ${{ (needs.prepare.outputs.mapchete-ref != '' && needs.prepare.outputs.mapchete-ref != 'N/A') && format('| **mapchete** | `{0}` |', needs.prepare.outputs.mapchete-ref || steps.image-fingerprint-check.outputs.m_ref) || '' }}
+            ${{ (needs.prepare.outputs.mapchete-eo-ref != '' && needs.prepare.outputs.mapchete-eo-ref != 'N/A') && format('| **mapchete-eo** | `{0}` |', needs.prepare.outputs.mapchete-eo-ref || steps.image-fingerprint-check.outputs.eo_ref) || '' }}
+            ${{ (needs.prepare.outputs.mapchete-hub-ref != '' && needs.prepare.outputs.mapchete-hub-ref != 'N/A') && format('| **mapchete-hub** | `{0}` |', needs.prepare.outputs.mapchete-hub-ref || steps.image-fingerprint-check.outputs.hub_ref) || '' }}
+            ${{ (needs.prepare.outputs.mapchete-hub-cli-ref != '' && needs.prepare.outputs.mapchete-hub-cli-ref != 'N/A') && format('| **mapchete-hub-cli** | `{0}` |', needs.prepare.outputs.mapchete-hub-cli-ref || steps.image-fingerprint-check.outputs.cli_ref) || '' }}
 
-            > **Note:** The `_ROLLING` references are preserved in `versions.yml` but are not part of the release alignment.
+            ---
+            #### 📡 Trigger Context
+            ${{ github.event_name == 'repository_dispatch' && format('**Source:** `{0}` (via Dispatch)', github.event.client_payload.source_repo) || '' }}
+            ${{ github.event_name == 'workflow_dispatch' && '**Source:** Manual Workflow Run' || '' }}
+            ${{ github.event_name == 'repository_dispatch' && format('**Payload Type:** `{0}`', github.event.client_payload.type) || '' }}
+
+            ---
+            > **Note:** The table above only lists components currently present in this specific image build.
           base: main
           delete-branch: true
           assignees: "scartography"
