@@ -59,7 +59,7 @@ jobs:
           P_TAG="${{ github.event.client_payload.image_tag }}"
           PREFIX="$(date +'%Y.%-m')."
           
-          # Default state
+          # Defaults
           USE_BRANCH="${{ github.ref_name }}"
           MODE="rolling"
           TARGET_LATEST="false"
@@ -72,7 +72,7 @@ jobs:
             TAG_NAME="$P_TAG"
             [[ "$P_TAG" == "latest" ]] && TARGET_LATEST="true"
           elif [[ "$P_TYPE" == "version" ]] || [[ "$EVENT" == "workflow_dispatch" && -z "${{ inputs.image-tag }}" ]]; then
-            # RC BRANCH DETECTION
+            # Find existing RC branch
             EXIST_RC=$(git branch -r | grep "origin/rc/${{ inputs.image-name }}-$PREFIX" | head -n 1 | sed 's/.*origin\///' || echo "")
             if [[ -n "$EXIST_RC" ]]; then
               TAG_NAME=$(echo "$EXIST_RC" | sed 's/.*-//')
@@ -94,55 +94,35 @@ jobs:
           echo "use_branch=$USE_BRANCH" >> $GITHUB_OUTPUT
           echo "target_latest=$TARGET_LATEST" >> $GITHUB_OUTPUT
 
-      - name: Switch to PR Branch (if exists)
+      - name: Pivot to RC Branch
         if: steps.version.outputs.mode == 'rc' && steps.version.outputs.use_branch != github.ref_name
         run: git checkout ${{ steps.version.outputs.use_branch }}
 
       - id: resolve
         run: |
-          # 1. Ensure we are looking at the right file
-          # If 'version' step switched branches, we are now on the RC branch
+          # Now reading from the PIVOTED branch
           touch versions.yml 
-          
-          # 2. Extract current branch defaults (the "Truth" of the current PR)
-          # We use tr to clean up any invisible carriage returns
           M_CUR=$(grep '^MAPCHETE_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n' || echo "main")
           EO_CUR=$(grep '^MAPCHETE_EO_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n' || echo "main")
           HUB_CUR=$(grep '^MAPCHETE_HUB_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n' || echo "main")
           CLI_CUR=$(grep '^MAPCHETE_HUB_CLI_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n' || echo "main")
 
-          # 3. Identify Dispatch Data
           D_REPO="${{ github.event.client_payload.source_repo }}"
           D_REF="${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}"
 
-          # 4. Final Resolution Matrix
-          # Priority: Dispatch > Manual Input > Current Branch Value (RC) > Default (Main)
-          
           # Mapchete
-          if [[ "$D_REPO" == "mapchete" ]]; then M_FINAL="$D_REF"
-          elif [[ -n "${{ inputs.mapchete-ref }}" ]]; then M_FINAL="${{ inputs.mapchete-ref }}"
-          else M_FINAL="$M_CUR"; fi
-
+          [[ "$D_REPO" == "mapchete" ]] && M_F="$D_REF" || M_F="${{ inputs.mapchete-ref || '$M_CUR' }}"
           # Mapchete-EO
-          if [[ "$D_REPO" == "mapchete-eo" ]]; then EO_FINAL="$D_REF"
-          elif [[ -n "${{ inputs.mapchete-eo-ref }}" ]]; then EO_FINAL="${{ inputs.mapchete-eo-ref }}"
-          else EO_FINAL="$EO_CUR"; fi
-
+          [[ "$D_REPO" == "mapchete-eo" ]] && EO_F="$D_REF" || EO_F="${{ inputs.mapchete-eo-ref || '$EO_CUR' }}"
           # Mapchete-Hub
-          if [[ "$D_REPO" == "mapchete-hub" ]]; then HUB_FINAL="$D_REF"
-          elif [[ -n "${{ inputs.mapchete-hub-ref }}" ]]; then HUB_FINAL="${{ inputs.mapchete-hub-ref }}"
-          else HUB_FINAL="$HUB_CUR"; fi
-
+          [[ "$D_REPO" == "mapchete-hub" ]] && H_F="$D_REF" || H_F="${{ inputs.mapchete-hub-ref || '$HUB_CUR' }}"
           # Mapchete-Hub-CLI
-          if [[ "$D_REPO" == "mapchete-hub-cli" ]]; then CLI_FINAL="$D_REF"
-          elif [[ -n "${{ inputs.mapchete-hub-cli-ref }}" ]]; then CLI_FINAL="${{ inputs.mapchete-hub-cli-ref }}"
-          else CLI_FINAL="$CLI_CUR"; fi
+          [[ "$D_REPO" == "mapchete-hub-cli" ]] && C_F="$D_REF" || C_F="${{ inputs.mapchete-hub-cli-ref || '$CLI_CUR' }}"
 
-          # Output to GITHUB_OUTPUT for the build job
-          echo "mapchete=${M_FINAL:-main}" >> $GITHUB_OUTPUT
-          echo "eo=${EO_FINAL:-main}" >> $GITHUB_OUTPUT
-          echo "hub=${HUB_FINAL:-main}" >> $GITHUB_OUTPUT
-          echo "cli=${CLI_FINAL:-main}" >> $GITHUB_OUTPUT
+          echo "mapchete=${M_F:-main}" >> $GITHUB_OUTPUT
+          echo "eo=${EO_F:-main}" >> $GITHUB_OUTPUT
+          echo "hub=${H_F:-main}" >> $GITHUB_OUTPUT
+          echo "cli=${C_F:-main}" >> $GITHUB_OUTPUT
 
       - name: Generate Summary
         if: always()
