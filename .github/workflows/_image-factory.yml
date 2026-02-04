@@ -103,26 +103,51 @@ jobs:
           HUB_CUR=$(get_cur "MAPCHETE_HUB_REF${TRACK}")
           CLI_CUR=$(get_cur "MAPCHETE_HUB_CLI_REF${TRACK}")
 
-          # Priority: Dispatch > Manual > versions.yml
+          # 1. Improved Dispatch Ref Logic
           D_REPO="${{ github.event.client_payload.source_repo }}"
-          D_REF="${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}"
+          P_TAG="${{ github.event.client_payload.image_tag }}"
+          P_SHA="${{ github.event.client_payload.sha }}"
 
+          # PRIORITY: 
+          # 1. Use SHA if provided (most stable for dev/rolling)
+          # 2. Use image_tag if SHA is missing
+          # 3. Default to empty if no dispatch
+          if [[ -n "$P_SHA" && "$P_SHA" != "null" ]]; then
+            D_REF="$P_SHA"
+          elif [[ -n "$P_TAG" && "$P_TAG" != "null" ]]; then
+            D_REF="$P_TAG"
+          else
+            D_REF=""
+          fi
+
+          # 2. Priority Fallback Function
           resolve_ref() {
-            if [[ "$D_REPO" == "$1" && -n "$D_REF" ]]; then echo "$D_REF"
-            elif [[ -n "$2" && "$2" != "null" && "$2" != "" ]]; then echo "$2"
-            else echo "$3"; fi
+            local repo_name=$1
+            local manual_input=$2
+            local current_track_val=$3
+            
+            if [[ "$D_REPO" == "$repo_name" && -n "$D_REF" ]]; then
+              echo "$D_REF"
+            elif [[ -n "$manual_input" && "$manual_input" != "null" && "$manual_input" != "" ]]; then
+              echo "$manual_input"
+            else
+              echo "$current_track_val"
+            fi
           }
 
-          # Final calculation
+          # 3. Final Resolution
           M_F=$(resolve_ref "mapchete" "${{ inputs.mapchete-ref }}" "$M_CUR")
           EO_F=$(resolve_ref "mapchete-eo" "${{ inputs.mapchete-eo-ref }}" "$EO_CUR")
-          H_F=$(resolve_ref "mapchete-hub" "${{ inputs.mapchete-hub-ref }}" "$HUB_CUR")
+          H_F=$(resolve_ref "mapchete-hub" "${{ inputs.mapchete-hub-ref }}" "$H_CUR")
           C_F=$(resolve_ref "mapchete-hub-cli" "${{ inputs.mapchete-hub-cli-ref }}" "$CLI_CUR")
 
-          # Normalize 'latest'
-          [[ "$M_F" == "latest" ]] && M_F="main"; [[ "$EO_F" == "latest" ]] && EO_F="main"
-          echo "mapchete=$M_F" >> $GITHUB_OUTPUT; echo "eo=$EO_F" >> $GITHUB_OUTPUT
-          echo "hub=$H_F" >> $GITHUB_OUTPUT; echo "cli=$C_F" >> $GITHUB_OUTPUT
+          # Normalize 'latest' or 'dev' labels to 'main' for the build if they aren't SHAs
+          normalize() { [[ "$1" == "latest" || "$1" == "dev" ]] && echo "main" || echo "$1"; }
+          
+          echo "mapchete=$(normalize $M_F)" >> $GITHUB_OUTPUT
+          echo "eo=$(normalize $EO_F)" >> $GITHUB_OUTPUT
+          echo "hub=$(normalize $H_F)" >> $GITHUB_OUTPUT
+          echo "cli=$(normalize $C_F)" >> $GITHUB_OUTPUT
 
       - name: Generate Summary
         if: always()
