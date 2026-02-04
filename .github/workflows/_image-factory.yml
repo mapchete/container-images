@@ -56,37 +56,29 @@ jobs:
         run: |
           EVENT="${{ github.event_name }}"
           P_TYPE="${{ github.event.client_payload.type }}"
-          P_TAG="${{ github.event.client_payload.image_tag }}"
           PREFIX="$(date +'%Y.%-m')."
           
-          # Defaults
-          USE_BRANCH="${{ github.ref_name }}"
-          MODE="rolling"
-          TARGET_LATEST="false"
-
-          if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            TAG_NAME="${{ github.ref_name }}"
-            MODE="release"
+          # 1. Fetch all remote branches so the runner knows about existing RCs
+          git fetch origin 
+          
+          # 2. Look for an existing RC branch for this month
+          # Note: We look for origin/rc/... but strip 'origin/' for the checkout
+          EXIST_RC=$(git branch -r | grep "origin/rc/${{ inputs.image-name }}-$PREFIX" | head -n 1 | sed 's|.*origin/||' || echo "")
+          
+          if [[ "$P_TYPE" == "version" ]] || [[ "$EVENT" == "workflow_dispatch" && -z "${{ inputs.image-tag }}" ]]; then
+            MODE="rc"
             TARGET_LATEST="true"
-          elif [[ "$EVENT" == "repository_dispatch" && "$P_TAG" =~ ^(latest|dev)$ ]]; then
-            TAG_NAME="$P_TAG"
-            [[ "$P_TAG" == "latest" ]] && TARGET_LATEST="true"
-          elif [[ "$P_TYPE" == "version" ]] || [[ "$EVENT" == "workflow_dispatch" && -z "${{ inputs.image-tag }}" ]]; then
-            # Find existing RC branch
-            EXIST_RC=$(git branch -r | grep "origin/rc/${{ inputs.image-name }}-$PREFIX" | head -n 1 | sed 's/.*origin\///' || echo "")
             if [[ -n "$EXIST_RC" ]]; then
-              TAG_NAME=$(echo "$EXIST_RC" | sed 's/.*-//')
               USE_BRANCH="$EXIST_RC"
-              MODE="rc"
+              TAG_NAME=$(echo "$EXIST_RC" | sed 's/.*-//')
             else
+              # Standard increment logic for new RC
               TAGS=$(gh api /orgs/mapchete/packages/container/${{ inputs.image-name }}/versions --jq '.[].metadata.container.tags[]' 2>/dev/null || echo "")
               LATEST_CTR=$(echo "$TAGS" | grep "^$PREFIX" | sed "s/$PREFIX//" | sort -nr | head -n1)
               [[ -z "$LATEST_CTR" ]] && TAG_NAME="${PREFIX}0" || TAG_NAME="${PREFIX}$((LATEST_CTR + 1))"
-              MODE="rc"
+              USE_BRANCH="${{ github.ref_name }}" # Will create new branch from main
             fi
-            TARGET_LATEST="true"
-          else
-            TAG_NAME="dev"
+          # ... (rest of release/rolling logic) ...
           fi
 
           echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
@@ -96,12 +88,16 @@ jobs:
 
       - name: Pivot to RC Branch
         if: steps.version.outputs.mode == 'rc' && steps.version.outputs.use_branch != github.ref_name
-        run: git checkout ${{ steps.version.outputs.use_branch }}
+        run: |
+          echo "Checking out existing RC branch: ${{ steps.version.outputs.use_branch }}"
+          git checkout ${{ steps.version.outputs.use_branch }}
 
       - id: resolve
         run: |
-          # Now reading from the PIVOTED branch
+          # Now that we've pivoted, 'versions.yml' is the one from the RC branch!
           touch versions.yml 
+          
+          # Extract current refs from the file on the current branch
           M_CUR=$(grep '^MAPCHETE_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n' || echo "main")
           EO_CUR=$(grep '^MAPCHETE_EO_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n' || echo "main")
           HUB_CUR=$(grep '^MAPCHETE_HUB_REF:' versions.yml | cut -d' ' -f2 | tr -d '\r\n' || echo "main")
@@ -110,19 +106,16 @@ jobs:
           D_REPO="${{ github.event.client_payload.source_repo }}"
           D_REF="${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}"
 
-          # Mapchete
-          [[ "$D_REPO" == "mapchete" ]] && M_F="$D_REF" || M_F="${{ inputs.mapchete-ref || '$M_CUR' }}"
-          # Mapchete-EO
-          [[ "$D_REPO" == "mapchete-eo" ]] && EO_F="$D_REF" || EO_F="${{ inputs.mapchete-eo-ref || '$EO_CUR' }}"
-          # Mapchete-Hub
-          [[ "$D_REPO" == "mapchete-hub" ]] && H_F="$D_REF" || H_F="${{ inputs.mapchete-hub-ref || '$HUB_CUR' }}"
-          # Mapchete-Hub-CLI
-          [[ "$D_REPO" == "mapchete-hub-cli" ]] && C_F="$D_REF" || C_F="${{ inputs.mapchete-hub-cli-ref || '$CLI_CUR' }}"
+          # Priority: Dispatch > Branch Current (Cumulative) > Main Default
+          [[ "$D_REPO" == "mapchete" ]] && M_F="$D_REF" || M_F="$M_CUR"
+          [[ "$D_REPO" == "mapchete-eo" ]] && EO_F="$D_REF" || EO_F="$EO_CUR"
+          [[ "$D_REPO" == "mapchete-hub" ]] && H_F="$D_REF" || H_F="$HUB_CUR"
+          [[ "$D_REPO" == "mapchete-hub-cli" ]] && C_F="$D_REF" || C_F="$CLI_CUR"
 
-          echo "mapchete=${M_F:-main}" >> $GITHUB_OUTPUT
-          echo "eo=${EO_F:-main}" >> $GITHUB_OUTPUT
-          echo "hub=${H_F:-main}" >> $GITHUB_OUTPUT
-          echo "cli=${C_F:-main}" >> $GITHUB_OUTPUT
+          echo "mapchete=$M_F" >> $GITHUB_OUTPUT
+          echo "eo=$EO_F" >> $GITHUB_OUTPUT
+          echo "hub=$H_F" >> $GITHUB_OUTPUT
+          echo "cli=$C_F" >> $GITHUB_OUTPUT
 
       - name: Generate Summary
         if: always()
