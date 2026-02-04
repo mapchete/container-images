@@ -281,21 +281,22 @@ jobs:
           SOURCE_VER="${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}"
           FINAL_VER="${{ needs.prepare.outputs.calculated-tag }}"
           
+          # 1. Update versions.yml
           KEY_NAME=$(echo "${SOURCE//-/_}_REF" | tr '[:lower:]' '[:upper:]')
-          
-          # 1. Update versions.yml (Additive!)
           sed -i "s|^${KEY_NAME}:.*|${KEY_NAME}: $SOURCE_VER|" versions.yml
           
-          # 2. Update CHANGELOG.rst (Smart Append)
+          # 2. Update CHANGELOG.rst
+          # Find the version header. If it exists, append a bullet. If not, create the block.
           if grep -q "^${FINAL_VER}$" CHANGELOG.rst; then
-            # Header exists, append bullet to existing block
-            # This looks for the version and appends 3 lines down
+            echo "Appending to existing version block in changelog..."
+            # Insert bullet point 3 lines after the header (header -> underline -> newline -> HERE)
             sed -i "/^${FINAL_VER}$/{n;n;a * Aligned **${SOURCE}** to \`${SOURCE_VER}\`." -e '}' CHANGELOG.rst
           else
-            # New version block
+            echo "Creating new version block in changelog..."
             LEN=${#FINAL_VER}
             UNDERLINE=$(printf '%0.s-' $(seq 1 $LEN))
             ENTRY="${FINAL_VER}\n${UNDERLINE}\n\n* Aligned **${SOURCE}** to \`${SOURCE_VER}\`.\n"
+            # Insert after the main title (assuming line 4 is safe)
             sed -i "4i $ENTRY" CHANGELOG.rst
           fi
 
