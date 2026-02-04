@@ -88,60 +88,41 @@ jobs:
       - id: resolve
         name: Resolve Component References
         run: |
-          # 1. Identify Track based on Mode
+          touch versions.yml
           MODE="${{ steps.version.outputs.mode }}"
-          if [[ "$MODE" == "rc" || "$MODE" == "release" ]]; then
-            TRACK="_RELEASE"
-          else
-            TRACK="_ROLLING"
-          fi
+          TRACK=$([[ "$MODE" == "rc" || "$MODE" == "release" ]] && echo "_RELEASE" || echo "_ROLLING")
 
-          # 2. Extract Current Values from versions.yml
-          # Using -F for fixed string and ensuring we match the start of the line
+          # Improved helper: Gets the value if exists, otherwise defaults to 'main'
           get_cur() { 
-            # Search for "KEY_NAME:" and get the second column
             local val=$(grep "^$1:" versions.yml | awk '{print $2}' | tr -d '\r\n ' || echo "")
-            if [[ -z "$val" ]]; then
-              echo "main" # Final safety fallback
-            else
-              echo "$val"
-            fi
+            [[ -z "$val" ]] && echo "main" || echo "$val"
           }
 
-          # Resolve based on the exact key names in your file
           M_CUR=$(get_cur "MAPCHETE_REF${TRACK}")
           EO_CUR=$(get_cur "MAPCHETE_EO_REF${TRACK}")
           HUB_CUR=$(get_cur "MAPCHETE_HUB_REF${TRACK}")
           CLI_CUR=$(get_cur "MAPCHETE_HUB_CLI_REF${TRACK}")
 
-          # 3. Handle Dispatch Context
+          # Priority: Dispatch > Manual > versions.yml
           D_REPO="${{ github.event.client_payload.source_repo }}"
-          D_TAG="${{ github.event.client_payload.image_tag }}"
-          D_SHA="${{ github.event.client_payload.sha }}"
-          [[ "$D_TAG" == "dev" || -z "$D_TAG" ]] && D_REF="$D_SHA" || D_REF="$D_TAG"
+          D_REF="${{ github.event.client_payload.image_tag || github.event.client_payload.sha }}"
 
-          # 4. Priority Function
           resolve_ref() {
-            local manual="${2}"
-            if [[ "$D_REPO" == "$1" && -n "$D_REF" ]]; then
-              echo "$D_REF"
-            elif [[ -n "$manual" && "$manual" != "null" ]]; then
-              echo "$manual"
-            else
-              echo "$3" # Fallback to the CUR value we found in the file
-            fi
+            if [[ "$D_REPO" == "$1" && -n "$D_REF" ]]; then echo "$D_REF"
+            elif [[ -n "$2" && "$2" != "null" && "$2" != "" ]]; then echo "$2"
+            else echo "$3"; fi
           }
 
+          # Final calculation
           M_F=$(resolve_ref "mapchete" "${{ inputs.mapchete-ref }}" "$M_CUR")
           EO_F=$(resolve_ref "mapchete-eo" "${{ inputs.mapchete-eo-ref }}" "$EO_CUR")
           H_F=$(resolve_ref "mapchete-hub" "${{ inputs.mapchete-hub-ref }}" "$HUB_CUR")
           C_F=$(resolve_ref "mapchete-hub-cli" "${{ inputs.mapchete-hub-cli-ref }}" "$CLI_CUR")
 
-          # 5. Export
-          echo "mapchete=$M_F" >> $GITHUB_OUTPUT
-          echo "eo=$EO_F" >> $GITHUB_OUTPUT
-          echo "hub=$H_F" >> $GITHUB_OUTPUT
-          echo "cli=$C_F" >> $GITHUB_OUTPUT
+          # Normalize 'latest'
+          [[ "$M_F" == "latest" ]] && M_F="main"; [[ "$EO_F" == "latest" ]] && EO_F="main"
+          echo "mapchete=$M_F" >> $GITHUB_OUTPUT; echo "eo=$EO_F" >> $GITHUB_OUTPUT
+          echo "hub=$H_F" >> $GITHUB_OUTPUT; echo "cli=$C_F" >> $GITHUB_OUTPUT
 
       - name: Generate Summary
         if: always()
@@ -329,14 +310,7 @@ jobs:
         run: |
           PUSH_DATE=$(date +'%Y-%m-%d'); echo "PUSH_DATE=$PUSH_DATE" >> $GITHUB_ENV
           
-          # 1. Capture current ROLLING values from disk to preserve them in the file
-          get_roll() { grep "^$1:" versions.yml | head -n 1 | awk '{print $2}' | tr -d '\r\n ' || echo "main"; }
-          M_ROLL=$(get_roll "MAPCHETE_REF_ROLLING")
-          EO_ROLL=$(get_roll "MAPCHETE_EO_REF_ROLLING")
-          HUB_ROLL=$(get_roll "MAPCHETE_HUB_REF_ROLLING")
-          CLI_ROLL=$(get_roll "MAPCHETE_HUB_CLI_REF_ROLLING")
-
-          # 2. Get the new RELEASE values (Truth for the PR)
+          # 1. Determine the Pins (Truth from the build)
           if [[ "${{ steps.image-fingerprint-check.outputs.changed }}" == "true" ]]; then
             M_REF="${{ needs.prepare.outputs.mapchete-ref }}"
             EO_REF="${{ needs.prepare.outputs.mapchete-eo-ref }}"
@@ -349,45 +323,52 @@ jobs:
             C_REF="${{ steps.image-fingerprint-check.outputs.cli_ref }}"
           fi
 
-          is_valid() { [[ -n "$1" && "$1" != "null" && "$1" != "N/A" ]]; }
+          # 2. Surgical Update Function
+          update_row() {
+            local key="$1"
+            local val="$2"
+            [[ -z "$val" || "$val" == "null" || "$val" == "N/A" ]] && return
+            
+            if grep -q "^${key}:" versions.yml; then
+              # Row exists: replace value after the colon
+              sed -i "s|^${key}:.*|${key}: ${val}|" versions.yml
+            else
+              # Row missing: append to end
+              echo "${key}: ${val}" >> versions.yml
+            fi
+          }
 
-          # 3. ATOMIC REWRITE: Keep both tracks in versions.yml
-          {
-            echo "MAPCHETE_REF_RELEASE: $M_REF"
-            echo "MAPCHETE_EO_REF_RELEASE: $EO_REF"
-            echo "MAPCHETE_HUB_REF_RELEASE: $H_REF"
-            is_valid "$C_REF" && echo "MAPCHETE_HUB_CLI_REF_RELEASE: $C_REF"
-            echo ""
-            echo "MAPCHETE_REF_ROLLING: $M_ROLL"
-            echo "MAPCHETE_EO_REF_ROLLING: $EO_ROLL"
-            echo "MAPCHETE_HUB_REF_ROLLING: $HUB_ROLL"
-            is_valid "$CLI_ROLL" && echo "MAPCHETE_HUB_CLI_REF_ROLLING: $CLI_ROLL"
-          } > versions.yml
+          # 3. Update the RELEASE track (Preserves ROLLING track automatically)
+          update_row "MAPCHETE_REF_RELEASE" "$M_REF"
+          update_row "MAPCHETE_EO_REF_RELEASE" "$EO_REF"
+          update_row "MAPCHETE_HUB_REF_RELEASE" "$H_REF"
+          update_row "MAPCHETE_HUB_CLI_REF_RELEASE" "$C_REF"
 
-          # 4. CHANGELOG.rst: ONLY include the RELEASE pins
+          # 4. Update the CHANGELOG.rst (Atomic Rebuild of the specific version block)
           FINAL_VER="${{ needs.prepare.outputs.calculated-tag }}"
           if grep -q "^${FINAL_VER}" CHANGELOG.rst; then
             START_LN=$(grep -n "^${FINAL_VER}" CHANGELOG.rst | head -n 1 | cut -d: -f1)
             END_LN=$(tail -n +$((START_LN + 1)) CHANGELOG.rst | grep -n -m 1 "^[0-9]" | cut -d: -f1)
             [ -z "$END_LN" ] && END_LN=$(wc -l < CHANGELOG.rst) || END_LN=$((START_LN + END_LN - 1))
             
-            sed -n "${START_LN},${END_LN}p" CHANGELOG.rst | grep -v "\* Aligned" > block_clean.tmp
+            # Extract and Clean
+            sed -n "${START_LN},${END_LN}p" CHANGELOG.rst | grep -v "\* Aligned" > block.tmp
+            
+            # Construct Bullets
             {
               echo "* Aligned **mapchete** to \`$M_REF\`"
               echo "* Aligned **mapchete-eo** to \`$EO_REF\`"
               echo "* Aligned **mapchete-hub** to \`$H_REF\`"
-              is_valid "$C_REF" && echo "* Aligned **mapchete-hub-cli** to \`$C_REF\`"
+              [[ -n "$C_REF" && "$C_REF" != "N/A" ]] && echo "* Aligned **mapchete-hub-cli** to \`$C_REF\`"
             } > bullets.tmp
-            sed -i "4r bullets.tmp" block_clean.tmp
             
+            sed -i "4r bullets.tmp" block.tmp
+            
+            # Reassemble
             head -n $((START_LN - 1)) CHANGELOG.rst > changelog.new
-            cat block_clean.tmp >> changelog.new
+            cat block.tmp >> changelog.new
             tail -n +$((END_LN + 1)) CHANGELOG.rst >> changelog.new
             mv changelog.new CHANGELOG.rst
-            
-            TITLE="${FINAL_VER} - ${PUSH_DATE}"; LEN=${#TITLE}; UNDERLINE=$(printf '%0.s-' $(seq 1 $LEN))
-            sed -i "${START_LN}s|.*|${TITLE}|" CHANGELOG.rst
-            sed -i "$((START_LN + 1))s|.*|${UNDERLINE}|" CHANGELOG.rst
           fi
 
       - name: Automated Version PR
