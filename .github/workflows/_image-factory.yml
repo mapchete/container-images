@@ -65,12 +65,35 @@ jobs:
           echo "cli=${{ inputs.mapchete-hub-cli-ref || (github.event.client_payload.source_repo == 'mapchete-hub-cli' && (github.event.client_payload.image_tag || github.event.client_payload.sha)) || '$CLI_DEF' }}" >> $GITHUB_OUTPUT
 
       - name: Generate Summary
+        if: always()
         run: |
           echo "### 🛠️ Build Preparation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggering Event:** \`${{ github.event_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Target Image:** \`${{ inputs.image-name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Requested Image Tag:** \`${{ inputs.image-tag || github.event.client_payload.image_tag || 'N/A' }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Build Decision:** \`${{ steps.check.outputs.run }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # 1. Repository Dispatch Details (Conditional Section)
+          if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+            echo "#### 📡 Dispatch Metadata" >> $GITHUB_STEP_SUMMARY
+            echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+            echo "| Source Repo | \`${{ github.event.client_payload.source_repo }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Event Type | \`${{ github.event.client_payload.type }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Payload Tag | \`${{ github.event.client_payload.image_tag }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Payload SHA | \`${{ github.event.client_payload.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # 2. Final Resolved References for the Build
+          echo "#### 📦 Resolved Component References" >> $GITHUB_STEP_SUMMARY
           echo "| Component | Resolved Reference |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| mapchete | \`${{ steps.resolve.outputs.mapchete }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| mapchete-eo | \`${{ steps.resolve.outputs.eo }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **mapchete** | \`${{ steps.resolve.outputs.mapchete }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **mapchete-eo** | \`${{ steps.resolve.outputs.eo }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **mapchete-hub** | \`${{ steps.resolve.outputs.hub }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **mapchete-hub-cli** | \`${{ steps.resolve.outputs.cli }}\` |" >> $GITHUB_STEP_SUMMARY
 
   build:
     needs: prepare
