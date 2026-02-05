@@ -86,9 +86,7 @@ jobs:
             echo "${PREFIX}$((LATEST + 1))"
           }
 
-          # -----------------------------------------------------------
           # 1. DETERMINE MODE & BRANCH
-          # -----------------------------------------------------------
           if [[ "${{ github.ref_type }}" == "tag" ]] || [[ "$EVENT" == "release" ]]; then
             MODE="release"
             BRANCH="${{ github.event.release.tag_name || github.ref_name }}"
@@ -101,7 +99,6 @@ jobs:
               MODE="rc"
               LATEST="true"
               BRANCH=$([[ "$EVENT" == "pull_request" ]] && echo "$HEAD_REF" || echo "$REF")
-              # Reuse existing tag if branch exists, else calc new
               EXIST_RC=$(git branch -r | grep "origin/rc/${{ inputs.image-name }}-$PREFIX" | head -n 1 | sed 's|.*origin/||' || echo "")
               if [[ -n "$EXIST_RC" ]]; then TAG=$(echo "$EXIST_RC" | sed 's/.*-//'); else TAG=$(calc_next_ver); fi
 
@@ -130,18 +127,14 @@ jobs:
             fi
           fi
 
-          # -----------------------------------------------------------
           # 2. DETERMINE TRACK
-          # -----------------------------------------------------------
           if [[ "$MODE" =~ ^(rc|release|pr)$ ]]; then
             TRACK="_RELEASE"
           else
             TRACK="_ROLLING"
           fi
 
-          # -----------------------------------------------------------
           # 3. SET OUTPUTS
-          # -----------------------------------------------------------
           echo "mode=$MODE" >> "$GITHUB_OUTPUT"
           echo "track=$TRACK" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
@@ -153,7 +146,6 @@ jobs:
         id: resolve
         shell: bash
         run: |
-          # Use the TRACK calculated in the previous step
           TRACK="${{ steps.version.outputs.track }}"
           MODE="${{ steps.version.outputs.mode }}"
           
@@ -178,7 +170,6 @@ jobs:
         if: always()
         shell: bash
         run: |
-          # Consume outputs directly
           MODE="${{ steps.version.outputs.mode }}"
           TAG="${{ steps.version.outputs.tag }}"
           LATEST="${{ steps.version.outputs.target_latest }}"
@@ -191,8 +182,26 @@ jobs:
             STATUS="## 🛑 BUILD SKIPPED"
           fi
 
-          if [[ "$MODE" == "rc" ]]; then TAG_PRE="rc-$TAG"; else TAG_PRE="$TAG"; fi
-          [[ "$LATEST" == "true" ]] && TAG_PRE="$TAG_PRE, latest"
+          # Visual Track Label (Emojis restored! 🧊 🌀)
+          if [[ "$TRACK" == "_RELEASE" ]]; then
+            ACTIVE_TRACK="RELEASE 🧊 (Pinned)"
+          else
+            ACTIVE_TRACK="ROLLING 🌀 (Latest)"
+          fi
+
+          # Tag Preview: Match the docker/metadata logic exactly
+          if [[ "$MODE" == "rc" ]]; then
+            # RC mode always gets the prefix
+            TAG_PRE="rc-$TAG"
+          else
+            # Release/Dev/PR get the raw tag
+            TAG_PRE="$TAG"
+          fi
+
+          # Add 'latest' only if enabled
+          if [[ "$LATEST" == "true" ]]; then
+            TAG_PRE="$TAG_PRE, latest"
+          fi
 
           cat <<EOF >> "$GITHUB_STEP_SUMMARY"
           $STATUS
@@ -202,12 +211,12 @@ jobs:
           | :--- | :--- |
           | **Target Image** | \`${{ inputs.image-name }}\` |
           | **Mode** | \`${MODE:-N/A}\` |
-          | **Track** | **${TRACK#_}** |
+          | **Track** | **$ACTIVE_TRACK** |
           | **Registry Tags** | \`$TAG_PRE\` |
           | **Trigger Event** | \`$EVENT\` |
 
           #### 📦 Resolved Component Versions
-          > Derived from **${TRACK#_}** track.
+          > Derived from **${ACTIVE_TRACK}** track.
 
           | Component | Reference |
           | :--- | :--- |
@@ -231,7 +240,7 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
-        with: 
+        with:
           ref: ${{ needs.prepare.outputs.use-branch }}
 
       - name: 🧬 Compare Fingerprints
@@ -253,9 +262,6 @@ jobs:
           
           if [[ "$LOCAL_FP" == "$REMOTE_FP" ]]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            
-            # If skipping build in RC mode, we need refs for the changelog
-            # We can grab them from the image we just verified
             if [[ "${{ needs.prepare.outputs.mode }}" == "rc" ]]; then
               docker pull "$REMOTE_IMAGE"
               get_ver() { docker run --rm "$REMOTE_IMAGE" uv pip list | grep "^$1 " | awk '{print $2}' | tr -d '\r\n' || echo "N/A"; }
@@ -312,8 +318,6 @@ jobs:
         run: |
           PUSH_DATE=$(date +'%Y-%m-%d'); echo "PUSH_DATE=$PUSH_DATE" >> "$GITHUB_ENV"
           FINAL_VER="${{ needs.prepare.outputs.calculated-tag }}"
-          
-          # Use the track from Prepare outputs!
           TRACK="${{ needs.prepare.outputs.track }}" 
           
           if [[ "${{ steps.fingerprint.outputs.changed }}" == "true" ]]; then
@@ -332,8 +336,6 @@ jobs:
             local key="$1"; local val="$2"
             [[ -n "$val" && "$val" != "null" && "$val" != "N/A" ]] && sed -i "s/^${key}:.*/${key}: ${val}/" versions.yml
           }
-          
-          # Dynamically use the track variable
           update_yaml "MAPCHETE_REF${TRACK}" "$M_REF"
           update_yaml "MAPCHETE_EO_REF${TRACK}" "$EO_REF"
           update_yaml "MAPCHETE_HUB_REF${TRACK}" "$H_REF"
@@ -348,7 +350,6 @@ jobs:
             START_LN=$(grep -n "^${FINAL_VER}" CHANGELOG.rst | head -n 1 | cut -d: -f1)
             END_LN=$(tail -n +$((START_LN + 1)) CHANGELOG.rst | grep -n -m 1 "^[0-9]" | cut -d: -f1)
             [[ -z "$END_LN" ]] && END_LN=$(wc -l < CHANGELOG.rst) || END_LN=$((START_LN + END_LN - 1))
-            
             sed -n "${START_LN},${END_LN}p" CHANGELOG.rst | grep -v "\* Aligned" > block.tmp
             {
               echo "* Aligned **mapchete** to \`$M_REF\`"
@@ -357,7 +358,6 @@ jobs:
               is_valid "$C_REF" && echo "* Aligned **mapchete-hub-cli** to \`$C_REF\`"
             } > bullets.tmp
             sed -i "4r bullets.tmp" block.tmp
-            
             head -n $((START_LN - 1)) CHANGELOG.rst > changelog.new
             cat block.tmp >> changelog.new
             tail -n +$((END_LN + 1)) CHANGELOG.rst >> changelog.new
@@ -408,6 +408,35 @@ jobs:
           delete-branch: true
           assignees: "scartography"
           reviewers: "ungarj"
+
+      # 📊 FINAL STATUS: Appends to the Dashboard
+      - name: 📊 Build Outcome
+        if: always()
+        run: |
+          CHANGED="${{ steps.fingerprint.outputs.changed }}"
+          FP="${{ steps.fingerprint.outputs.fp }}"
+          
+          if [[ "$CHANGED" == "true" ]]; then
+            RESULT="🚀 **New Image Built & Pushed**"
+            DETAILS="The local build fingerprint differed from the registry."
+          elif [[ "$CHANGED" == "false" ]]; then
+            RESULT="✅ **Image Up-To-Date (Skipped)**"
+            DETAILS="Registry fingerprint matches local build. No action taken."
+          else
+            RESULT="❌ **Build Failed / Unknown**"
+            DETAILS="The fingerprint check did not complete successfully."
+          fi
+          
+          # This appends a new card to the summary page
+          cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+          
+          ### 🏁 Build Outcome
+          | Status | Fingerprint |
+          | :--- | :--- |
+          | $RESULT | \`$FP\` |
+          
+          > $DETAILS
+          EOF
 
 # ==============================================================================
 # 🧹 CLEANUP: REGISTRY HYGIENE
