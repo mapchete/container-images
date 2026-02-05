@@ -24,17 +24,22 @@ jobs:
     name: 🔍 Resolve Context
     runs-on: ubuntu-latest
     outputs:
+      # Execution Control
       run-build: ${{ steps.check.outputs.run }}
-      # Refs
+      trigger: ${{ steps.version.outputs.trigger }}
+      
+      # Strategy & Context (The "Truth")
+      mode: ${{ steps.version.outputs.mode }}
+      track: ${{ steps.version.outputs.track }}
+      calculated-tag: ${{ steps.version.outputs.tag }}
+      target-latest: ${{ steps.version.outputs.target_latest }}
+      use-branch: ${{ steps.version.outputs.use_branch }}
+      
+      # Resolved Component Refs
       mapchete-ref: ${{ steps.resolve.outputs.mapchete }}
       mapchete-eo-ref: ${{ steps.resolve.outputs.eo }}
       mapchete-hub-ref: ${{ steps.resolve.outputs.hub }}
       mapchete-hub-cli-ref: ${{ steps.resolve.outputs.cli }}
-      # Versioning
-      calculated-tag: ${{ steps.version.outputs.tag }}
-      mode: ${{ steps.version.outputs.mode }}
-      use_branch: ${{ steps.version.outputs.use_branch }}
-      target_latest: ${{ steps.version.outputs.target_latest }}
 
     steps:
       - name: ⬇️ Checkout
@@ -60,7 +65,7 @@ jobs:
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: "🏷️ Strategy: Version & Mode"
+      - name: "🏷️ Strategy: Version, Mode & Track"
         id: version
         shell: bash
         env:
@@ -72,9 +77,9 @@ jobs:
           EVENT="${{ github.event_name }}"
           TYPE="${{ github.event.client_payload.type }}"
           REF="${{ github.ref_name }}"
-          HEAD_REF="${{ github.head_ref }}" # For PRs
+          HEAD_REF="${{ github.head_ref }}"
 
-          # Helper: Calculate next version based on registry
+          # Helper: Calculate next version
           calc_next_ver() {
             TAGS=$(gh api "/orgs/mapchete/packages/container/${{ inputs.image-name }}/versions" --jq '.[].metadata.container.tags[]' 2>/dev/null || echo "")
             LATEST=$(echo "$TAGS" | grep "^$PREFIX" | sed "s/$PREFIX//" | sort -nr | head -n1 || echo "-1")
@@ -82,90 +87,75 @@ jobs:
           }
 
           # -----------------------------------------------------------
-          # 1. RELEASE MODE (Tagged Releases)
+          # 1. DETERMINE MODE & BRANCH
           # -----------------------------------------------------------
           if [[ "${{ github.ref_type }}" == "tag" ]] || [[ "$EVENT" == "release" ]]; then
-            echo "mode=release" >> "$GITHUB_OUTPUT"
-            TAG="${{ github.event.release.tag_name || github.ref_name }}"
-            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-            echo "use_branch=$TAG" >> "$GITHUB_OUTPUT"
-            echo "target_latest=true" >> "$GITHUB_OUTPUT"
+            MODE="release"
+            BRANCH="${{ github.event.release.tag_name || github.ref_name }}"
+            TAG="$BRANCH"
+            LATEST="true"
 
-          # -----------------------------------------------------------
-          # 2. PULL REQUESTS & RC LOGIC
-          # -----------------------------------------------------------
           elif [[ "$EVENT" == "pull_request" ]] || [[ "$TYPE" == "version" ]] || [[ "$REF" =~ ^rc/ ]]; then
-            
-            # --- A. RC BRANCH DETECTED (Explicit 'rc/' prefix) ---
+            # A. RC Branch
             if [[ "$HEAD_REF" =~ ^rc/ ]] || [[ "$REF" =~ ^rc/ ]]; then
-              echo "mode=rc" >> "$GITHUB_OUTPUT"
-              echo "target_latest=true" >> "$GITHUB_OUTPUT"
-              # Use HEAD_REF for PRs, REF for pushes
+              MODE="rc"
+              LATEST="true"
               BRANCH=$([[ "$EVENT" == "pull_request" ]] && echo "$HEAD_REF" || echo "$REF")
-              echo "use_branch=$BRANCH" >> "$GITHUB_OUTPUT"
-              
-              # Calculate next version
+              # Reuse existing tag if branch exists, else calc new
               EXIST_RC=$(git branch -r | grep "origin/rc/${{ inputs.image-name }}-$PREFIX" | head -n 1 | sed 's|.*origin/||' || echo "")
-              if [[ -n "$EXIST_RC" ]]; then
-                TAG=$(echo "$EXIST_RC" | sed 's/.*-//')
-              else
-                TAG=$(calc_next_ver)
-              fi
+              if [[ -n "$EXIST_RC" ]]; then TAG=$(echo "$EXIST_RC" | sed 's/.*-//'); else TAG=$(calc_next_ver); fi
 
-            # --- B. STANDARD INTERNAL PR (Home Repo) ---
-            # If it's a PR from the same repo and NOT an RC branch -> Treat as DEV
+            # B. Internal PR (Dev Mode)
             elif [[ "$EVENT" == "pull_request" && "${{ github.event.pull_request.head.repo.full_name }}" == "${{ github.repository }}" ]]; then
-              echo "mode=dev" >> "$GITHUB_OUTPUT"
-              echo "tag=dev" >> "$GITHUB_OUTPUT"
-              # User requested dev/latest tags for internal PRs
-              echo "target_latest=true" >> "$GITHUB_OUTPUT" 
-              echo "use_branch=$HEAD_REF" >> "$GITHUB_OUTPUT"
-              # Skip calc_next_ver, we use 'dev'
-              TAG="dev" 
+              MODE="dev"
+              TAG="dev"
+              LATEST="true"
+              BRANCH="$HEAD_REF"
 
-            # --- C. EXTERNAL PR (Forks) ---
-            # Fallback to isolated PR mode to protect 'latest' tag
-            elif [[ "$EVENT" == "pull_request" ]]; then
-              echo "mode=pr" >> "$GITHUB_OUTPUT"
-              echo "target_latest=false" >> "$GITHUB_OUTPUT"
-              echo "use_branch=$HEAD_REF" >> "$GITHUB_OUTPUT"
-              TAG=$(calc_next_ver)
-
-            # --- D. DISPATCH (Version Type) ---
+            # C. External PR / Dispatch
             else
-              echo "mode=rc" >> "$GITHUB_OUTPUT"
-              echo "target_latest=true" >> "$GITHUB_OUTPUT"
-              echo "use_branch=$REF" >> "$GITHUB_OUTPUT"
+              MODE=$([[ "$EVENT" == "pull_request" ]] && echo "pr" || echo "rc")
+              LATEST=$([[ "$EVENT" == "pull_request" ]] && echo "false" || echo "true")
+              BRANCH=$([[ "$EVENT" == "pull_request" ]] && echo "$HEAD_REF" || echo "$REF")
               TAG=$(calc_next_ver)
             fi
             
-            # Output the calculated tag (unless we already set it to 'dev')
-            if [[ "$TAG" != "dev" ]]; then echo "tag=$TAG" >> "$GITHUB_OUTPUT"; fi
-
-          # -----------------------------------------------------------
-          # 3. DIRECT PUSH (Main/Dev)
-          # -----------------------------------------------------------
-          else
-            echo "mode=dev" >> "$GITHUB_OUTPUT"
-            echo "use_branch=$REF" >> "$GITHUB_OUTPUT"
-
+          else # Direct Push / Manual
+            MODE="dev"
+            BRANCH="$REF"
             if [[ "$REF" == "main" ]]; then
-              echo "tag=dev" >> "$GITHUB_OUTPUT"
-              echo "target_latest=true" >> "$GITHUB_OUTPUT"
+              TAG="dev"; LATEST="true"
             else
-              echo "tag=${{ inputs.image-tag || 'dev' }}" >> "$GITHUB_OUTPUT"
-              echo "target_latest=false" >> "$GITHUB_OUTPUT"
+              TAG="${{ inputs.image-tag || 'dev' }}"; LATEST="false"
             fi
           fi
+
+          # -----------------------------------------------------------
+          # 2. DETERMINE TRACK
+          # -----------------------------------------------------------
+          if [[ "$MODE" =~ ^(rc|release|pr)$ ]]; then
+            TRACK="_RELEASE"
+          else
+            TRACK="_ROLLING"
+          fi
+
+          # -----------------------------------------------------------
+          # 3. SET OUTPUTS
+          # -----------------------------------------------------------
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "track=$TRACK" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "target_latest=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "use_branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "trigger=$EVENT" >> "$GITHUB_OUTPUT"
 
       - name: "🧩 Strategy: Component Refs"
         id: resolve
         shell: bash
         run: |
+          # Use the TRACK calculated in the previous step
+          TRACK="${{ steps.version.outputs.track }}"
           MODE="${{ steps.version.outputs.mode }}"
-          # RC, RELEASE, and EXTERNAL PRs use the Release Track.
-          # Internal PRs (mode=dev) use the Rolling Track.
-          TRACK=$([[ "$MODE" =~ ^(rc|release|pr)$ ]] && echo "_RELEASE" || echo "_ROLLING")
           
           resolve_ref() {
             local repo=$1; local manual=$2; local key="MAPCHETE_${3}_REF${TRACK}"
@@ -188,45 +178,38 @@ jobs:
         if: always()
         shell: bash
         run: |
-          # 1. Header Logic
-          if [[ "${{ steps.check.outputs.run }}" == "true" ]]; then
-            echo "## ⏩ BUILD PROCEEDING" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "## 🛑 BUILD SKIPPED" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
+          # Consume outputs directly
           MODE="${{ steps.version.outputs.mode }}"
           TAG="${{ steps.version.outputs.tag }}"
           LATEST="${{ steps.version.outputs.target_latest }}"
-          EVENT="${{ github.event_name }}"
+          EVENT="${{ steps.version.outputs.trigger }}"
+          TRACK="${{ steps.version.outputs.track }}"
           
-          # Visual Track Label
-          if [[ "$MODE" =~ ^(rc|release|pr)$ ]]; then
-            ACTIVE_TRACK="RELEASE 🧊 (Pinned)"
+          if [[ "${{ steps.check.outputs.run }}" == "true" ]]; then
+            STATUS="## ⏩ BUILD PROCEEDING"
           else
-            ACTIVE_TRACK="ROLLING 🌀 (Latest)"
+            STATUS="## 🛑 BUILD SKIPPED"
           fi
 
-          # Tag Preview Logic
           if [[ "$MODE" == "rc" ]]; then TAG_PRE="rc-$TAG"; else TAG_PRE="$TAG"; fi
           [[ "$LATEST" == "true" ]] && TAG_PRE="$TAG_PRE, latest"
 
-          # 2. Render Table
           cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+          $STATUS
           ---
           ### 🛠️ Build Preparation Summary
           | Property | Value |
           | :--- | :--- |
           | **Target Image** | \`${{ inputs.image-name }}\` |
           | **Mode** | \`${MODE:-N/A}\` |
-          | **Track** | **$ACTIVE_TRACK** |
+          | **Track** | **${TRACK#_}** |
           | **Registry Tags** | \`$TAG_PRE\` |
           | **Trigger Event** | \`$EVENT\` |
 
           #### 📦 Resolved Component Versions
-          > Derived from **$ACTIVE_TRACK**, potentially overridden by manual inputs.
+          > Derived from **${TRACK#_}** track.
 
-          | Component | Resolved Reference |
+          | Component | Reference |
           | :--- | :--- |
           | **mapchete** | \`${{ steps.resolve.outputs.mapchete }}\` |
           | **mapchete-eo** | \`${{ steps.resolve.outputs.eo }}\` |
@@ -249,7 +232,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: 
-          ref: ${{ needs.prepare.outputs.use_branch }}
+          ref: ${{ needs.prepare.outputs.use-branch }}
+
       - name: 🧬 Compare Fingerprints
         id: fingerprint
         run: |
@@ -268,9 +252,10 @@ jobs:
           echo "fp=$LOCAL_FP" >> "$GITHUB_OUTPUT"
           
           if [[ "$LOCAL_FP" == "$REMOTE_FP" ]]; then
-            echo "✅ Match. Up to date."
             echo "changed=false" >> "$GITHUB_OUTPUT"
             
+            # If skipping build in RC mode, we need refs for the changelog
+            # We can grab them from the image we just verified
             if [[ "${{ needs.prepare.outputs.mode }}" == "rc" ]]; then
               docker pull "$REMOTE_IMAGE"
               get_ver() { docker run --rm "$REMOTE_IMAGE" uv pip list | grep "^$1 " | awk '{print $2}' | tr -d '\r\n' || echo "N/A"; }
@@ -280,7 +265,6 @@ jobs:
               echo "cli_ref=$(get_ver mapchete-hub-cli)" >> "$GITHUB_OUTPUT"
             fi
           else
-            echo "⚠️ Mismatch. Build required."
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -305,7 +289,7 @@ jobs:
             type=raw,value=rc-${{ needs.prepare.outputs.calculated-tag }},enable=${{ needs.prepare.outputs.mode == 'rc' }}
             type=raw,value=${{ needs.prepare.outputs.calculated-tag }},enable=${{ needs.prepare.outputs.mode != 'rc' && needs.prepare.outputs.mode != 'dev' }}
             type=raw,value=dev,enable=${{ needs.prepare.outputs.mode == 'dev' }}
-            type=raw,value=latest,enable=${{ needs.prepare.outputs.target_latest == 'true' }}
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.target-latest == 'true' }}
             type=raw,value=${{ inputs.image-tag }},enable=${{ inputs.image-tag != '' }}
 
       - name: 🚀 Push Image
@@ -329,6 +313,9 @@ jobs:
           PUSH_DATE=$(date +'%Y-%m-%d'); echo "PUSH_DATE=$PUSH_DATE" >> "$GITHUB_ENV"
           FINAL_VER="${{ needs.prepare.outputs.calculated-tag }}"
           
+          # Use the track from Prepare outputs!
+          TRACK="${{ needs.prepare.outputs.track }}" 
+          
           if [[ "${{ steps.fingerprint.outputs.changed }}" == "true" ]]; then
             M_REF="${{ needs.prepare.outputs.mapchete-ref }}"
             EO_REF="${{ needs.prepare.outputs.mapchete-eo-ref }}"
@@ -345,10 +332,12 @@ jobs:
             local key="$1"; local val="$2"
             [[ -n "$val" && "$val" != "null" && "$val" != "N/A" ]] && sed -i "s/^${key}:.*/${key}: ${val}/" versions.yml
           }
-          update_yaml "MAPCHETE_REF_RELEASE" "$M_REF"
-          update_yaml "MAPCHETE_EO_REF_RELEASE" "$EO_REF"
-          update_yaml "MAPCHETE_HUB_REF_RELEASE" "$H_REF"
-          update_yaml "MAPCHETE_HUB_CLI_REF_RELEASE" "$C_REF"
+          
+          # Dynamically use the track variable
+          update_yaml "MAPCHETE_REF${TRACK}" "$M_REF"
+          update_yaml "MAPCHETE_EO_REF${TRACK}" "$EO_REF"
+          update_yaml "MAPCHETE_HUB_REF${TRACK}" "$H_REF"
+          update_yaml "MAPCHETE_HUB_CLI_REF${TRACK}" "$C_REF"
 
           is_valid() { [[ -n "$1" && "$1" != "null" && "$1" != "N/A" ]]; }
           TITLE="${FINAL_VER} - ${PUSH_DATE}"
@@ -359,6 +348,7 @@ jobs:
             START_LN=$(grep -n "^${FINAL_VER}" CHANGELOG.rst | head -n 1 | cut -d: -f1)
             END_LN=$(tail -n +$((START_LN + 1)) CHANGELOG.rst | grep -n -m 1 "^[0-9]" | cut -d: -f1)
             [[ -z "$END_LN" ]] && END_LN=$(wc -l < CHANGELOG.rst) || END_LN=$((START_LN + END_LN - 1))
+            
             sed -n "${START_LN},${END_LN}p" CHANGELOG.rst | grep -v "\* Aligned" > block.tmp
             {
               echo "* Aligned **mapchete** to \`$M_REF\`"
@@ -367,6 +357,7 @@ jobs:
               is_valid "$C_REF" && echo "* Aligned **mapchete-hub-cli** to \`$C_REF\`"
             } > bullets.tmp
             sed -i "4r bullets.tmp" block.tmp
+            
             head -n $((START_LN - 1)) CHANGELOG.rst > changelog.new
             cat block.tmp >> changelog.new
             tail -n +$((END_LN + 1)) CHANGELOG.rst >> changelog.new
