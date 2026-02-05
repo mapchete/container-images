@@ -55,27 +55,57 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           EVENT="${{ github.event_name }}"
-          # 1. PRIORITY: If triggered by a Tag or a Published Release
+          P_TYPE="${{ github.event.client_payload.type }}"
+          PREFIX="$(date +'%Y.%-m')."
+          git fetch origin 
+
+          # 1. RELEASE MODE (Tags)
           if [[ "${{ github.ref_type }}" == "tag" ]] || [[ "$EVENT" == "release" ]]; then
             MODE="release"
             TAG_NAME="${{ github.ref_name }}"
-            # If it's a release event, ref_name might be the release ID, so we grab tag_name
             [[ "$EVENT" == "release" ]] && TAG_NAME="${{ github.event.release.tag_name }}"
             USE_BRANCH="$TAG_NAME"
             TARGET_LATEST="true"
 
-          # 2. RC Mode (Triggered by 'version' dispatch or manual run without tag)
-          elif [[ "${{ github.event.client_payload.type }}" == "version" ]] || [[ "$EVENT" == "workflow_dispatch" && -z "${{ inputs.image-tag }}" ]]; then
-            MODE="rc"
-            TARGET_LATEST="true"
-            # ... (your existing RC branch discovery logic) ...
-            # Ensure USE_BRANCH and TAG_NAME are set here as per your current logic
+          # 2. RC or PR MODE (Version Computation Needed)
+          elif [[ "$EVENT" == "pull_request" ]] || [[ "$P_TYPE" == "version" ]] || [[ "$EVENT" == "workflow_dispatch" && -z "${{ inputs.image-tag }}" ]]; then
+            # Determine if this is a PR or an RC dispatch
+            if [[ "$EVENT" == "pull_request" ]]; then
+              MODE="pr"
+              TARGET_LATEST="false"
+              USE_BRANCH="${{ github.head_ref }}"
+            else
+              MODE="rc"
+              TARGET_LATEST="true"
+              USE_BRANCH="${{ github.ref_name }}"
+            fi
 
-          # 3. Dev Mode (Default)
+            # --- COMPUTE NEXT VERSION ---
+            # Search for an existing RC branch for this month
+            EXIST_RC=$(git branch -r | grep "origin/rc/${{ inputs.image-name }}-$PREFIX" | head -n 1 | sed 's|.*origin/||' || echo "")
+            
+            if [[ -n "$EXIST_RC" ]]; then
+              # Re-use version from existing RC branch
+              USE_BRANCH="$EXIST_RC"
+              TAG_NAME=$(echo "$EXIST_RC" | sed 's/.*-//')
+            else
+              # Query GHCR for the highest existing patch number for this month
+              TAGS=$(gh api /orgs/mapchete/packages/container/${{ inputs.image-name }}/versions --jq '.[].metadata.container.tags[]' 2>/dev/null || echo "")
+              LATEST_CTR=$(echo "$TAGS" | grep "^$PREFIX" | sed "s/$PREFIX//" | sort -nr | head -n1)
+              
+              if [[ -z "$LATEST_CTR" ]]; then
+                TAG_NAME="${PREFIX}0"
+              else
+                TAG_NAME="${PREFIX}$((LATEST_CTR + 1))"
+              fi
+            fi
+            # ----------------------------
+
+          # 3. DEV MODE (Manual builds with specific tags or branch pushes)
           else
             MODE="dev"
-            TAG_NAME="dev"
-            USE_BRANCH="${{ github.head_ref || github.ref_name }}"
+            TAG_NAME="${{ inputs.image-tag || 'dev' }}"
+            USE_BRANCH="${{ github.ref_name }}"
             TARGET_LATEST="false"
           fi
 
