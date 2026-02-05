@@ -24,17 +24,23 @@ RUN git clone https://github.com/mapchete/mapchete-eo deps/mapchete-eo && \
 RUN git clone https://github.com/mapchete/mapchete-hub deps/mapchete-hub && \
     cd deps/mapchete-hub && git checkout ${MAPCHETE_HUB_REF}
 
+RUN uv export --frozen --project deps/mapchete >> raw.txt && \
+    uv export --frozen --project deps/mapchete-eo >> raw.txt && \
+    uv export --frozen --project deps/mapchete-hub >> raw.txt && \
+    grep '==' raw.txt | \
+    grep -v "mapchete" | \
+    sed 's/[[:space:];\\].*//' | sort -V | \
+    awk -F'==' '{a[$1]=$2} END {for (i in a) print i"=="a[i]}' | sort > requirements.txt
+
 RUN uv init --name factory-build --lib .
 
-RUN MAPCHETE_HASH=$(git -C deps/mapchete rev-parse HEAD) && \
-    EO_HASH=$(git -C deps/mapchete-eo rev-parse HEAD) && \
-    HUB_HASH=$(git -C deps/mapchete-hub rev-parse HEAD) && \
-    uv add \
-      "mapchete @ git+https://github.com/mapchete/mapchete.git@$MAPCHETE_HASH" \
-      "mapchete-eo @ git+https://github.com/mapchete/mapchete-eo.git@$EO_HASH" \
-      "mapchete-hub @ git+https://github.com/mapchete/mapchete-hub.git@$HUB_HASH"
-
-RUN uv sync --frozen --no-dev
+RUN MAPCHETE_SHA=$(git -C deps/mapchete rev-parse HEAD) && \
+    EO_SHA=$(git -C deps/mapchete-eo rev-parse HEAD) && \
+    HUB_SHA=$(git -C deps/mapchete-hub rev-parse HEAD) && \
+    uv add --constraints requirements.txt \
+      "mapchete @ git+https://github.com/mapchete/mapchete.git@$MAPCHETE_SHA" \
+      "mapchete-eo @ git+https://github.com/mapchete/mapchete-eo.git@$EO_SHA" \
+      "mapchete-hub @ git+https://github.com/mapchete/mapchete-hub.git@$HUB_SHA"
 
 # Generate the fingerprint based on the resolved lockfile
 # Combine the lockfile hash AND a hash of the source code 
