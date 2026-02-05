@@ -88,69 +88,62 @@ jobs:
       - id: resolve
         name: Resolve Component References
         run: |
-          # 1. Ensure file exists and is readable
           touch versions.yml
           MODE="${{ steps.version.outputs.mode }}"
+          # Track determines if we look at _RELEASE or _ROLLING in versions.yml
           TRACK=$([[ "$MODE" == "rc" || "$MODE" == "release" ]] && echo "_RELEASE" || echo "_ROLLING")
 
-          # Robust helper: Extracts value, handles DOS line endings, and defaults to 'main'
           get_cur() { 
-            # grep for the key, extract second column, remove \r and whitespace
             local val=$(grep "^$1:" versions.yml | awk -F': ' '{print $2}' | tr -d '\r\n ' || echo "")
-            if [[ -z "$val" || "$val" == "null" ]]; then
-              echo "main"
-            else
-              echo "$val"
-            fi
+            [[ -z "$val" || "$val" == "null" ]] && echo "main" || echo "$val"
           }
 
-          # 2. Fetch current track values
           M_CUR=$(get_cur "MAPCHETE_REF${TRACK}")
           EO_CUR=$(get_cur "MAPCHETE_EO_REF${TRACK}")
           HUB_CUR=$(get_cur "MAPCHETE_HUB_REF${TRACK}")
           CLI_CUR=$(get_cur "MAPCHETE_HUB_CLI_REF${TRACK}")
 
-          # 3. Improved Dispatch Ref Logic
+          # 1. DISPATCH LOGIC (Mode-Aware)
           D_REPO="${{ github.event.client_payload.source_repo }}"
           P_SHA="${{ github.event.client_payload.sha }}"
           P_TAG="${{ github.event.client_payload.image_tag }}"
           
-          # Normalize D_REF: Priority SHA > TAG > Empty
-          D_REF=""
-          if [[ -n "$P_SHA" && "$P_SHA" != "null" ]]; then D_REF="$P_SHA"
-          elif [[ -n "$P_TAG" && "$P_TAG" != "null" ]]; then D_REF="$P_TAG"; fi
+          # If we are in RC/Release mode, prioritize the Tag (2026.x.x)
+          # If in Dev/Rolling mode, prioritize the SHA
+          if [[ "$MODE" == "rc" || "$MODE" == "release" ]]; then
+            D_REF=$([[ -n "$P_TAG" && "$P_TAG" != "null" ]] && echo "$P_TAG" || echo "$P_SHA")
+          else
+            D_REF=$([[ -n "$P_SHA" && "$P_SHA" != "null" ]] && echo "$P_SHA" || echo "$P_TAG")
+          fi
 
-          # 4. Hardened Priority Fallback Function
+          # 2. RESOLUTION FUNCTION
           resolve_ref() {
             local repo_name=$1
             local manual_input=$2
             local current_track_val=$3
             
-            # Priority 1: Dispatch (Only if SHA/Tag actually exists)
-            if [[ "$D_REPO" == "$repo_name" && -n "$D_REF" ]]; then
+            # Priority 1: Triggering Repo (The Dispatcher)
+            if [[ "$D_REPO" == "$repo_name" && -n "$D_REF" && "$D_REF" != "null" ]]; then
               echo "$D_REF"
-            # Priority 2: Manual Workflow Input (Strip "null" strings)
-            elif [[ -n "$manual_input" && "$manual_input" != "null" && "$manual_input" != "" ]]; then
+            # Priority 2: Manual Workflow Input
+            elif [[ -n "$manual_input" && "$manual_input" != "null" ]]; then
               echo "$manual_input"
-            # Priority 3: versions.yml Value (Should be 'main' via get_cur if missing)
-            elif [[ -n "$current_track_val" && "$current_track_val" != "null" ]]; then
-              echo "$current_track_val"
-            # Global Fallback
+            # Priority 3: versions.yml Fallback (Crucial for MAPCHETE_HUB_REF)
             else
-              echo "main"
+              echo "$current_track_val"
             fi
           }
 
-          # 5. Final Resolution
+          # 3. Execution
           M_F=$(resolve_ref "mapchete" "${{ inputs.mapchete-ref }}" "$M_CUR")
           EO_F=$(resolve_ref "mapchete-eo" "${{ inputs.mapchete-eo-ref }}" "$EO_CUR")
           H_F=$(resolve_ref "mapchete-hub" "${{ inputs.mapchete-hub-ref }}" "$HUB_CUR")
           C_F=$(resolve_ref "mapchete-hub-cli" "${{ inputs.mapchete-hub-cli-ref }}" "$CLI_CUR")
 
-          # Final Normalization and Output
-          normalize() { 
+          # Normalize function ensures we never pass empty strings to build-args
+          normalize() {
             local v=$(echo "$1" | tr -d ' ')
-            [[ -z "$v" || "$v" == "latest" || "$v" == "dev" || "$v" == "null" ]] && echo "main" || echo "$v"
+            [[ -z "$v" || "$v" == "null" || "$v" == "latest" ]] && echo "main" || echo "$v"
           }
           
           echo "mapchete=$(normalize $M_F)" >> $GITHUB_OUTPUT
@@ -346,7 +339,7 @@ jobs:
           PUSH_DATE=$(date +'%Y-%m-%d'); echo "PUSH_DATE=$PUSH_DATE" >> $GITHUB_ENV
           FINAL_VER="${{ needs.prepare.outputs.calculated-tag }}"
           
-          # 2. Select Release Track Pins (Truth)
+          # 2. Select Release Track Pins (The Truth)
           if [[ "${{ steps.image-fingerprint-check.outputs.changed }}" == "true" ]]; then
             M_REF="${{ needs.prepare.outputs.mapchete-ref }}"
             EO_REF="${{ needs.prepare.outputs.mapchete-eo-ref }}"
@@ -359,39 +352,47 @@ jobs:
             C_REF="${{ steps.image-fingerprint-check.outputs.cli_ref }}"
           fi
           
-          is_valid() { [[ -n "$1" && "$1" != "null" && "$1" != "N/A" ]]; }
+          # --- NEW: Update versions.yml ---
+          update_yaml() {
+            local key=$1
+            local val=$2
+            if [[ -n "$val" && "$val" != "null" && "$val" != "N/A" ]]; then
+              # Use sed to update the value for the key
+              sed -i "s/^${key}:.*/${key}: ${val}/" versions.yml
+            fi
+          }
 
-          # 3. Handle CHANGELOG.rst
+          update_yaml "MAPCHETE_REF_RELEASE" "$M_REF"
+          update_yaml "MAPCHETE_EO_REF_RELEASE" "$EO_REF"
+          update_yaml "MAPCHETE_HUB_REF_RELEASE" "$H_REF"
+          update_yaml "MAPCHETE_HUB_CLI_REF_RELEASE" "$C_REF"
+          # -------------------------------
+
+          # 3. Handle CHANGELOG.rst (Your existing logic)
+          is_valid() { [[ -n "$1" && "$1" != "null" && "$1" != "N/A" ]]; }
           TITLE="${FINAL_VER} - ${PUSH_DATE}"
           LEN=${#TITLE}
           UNDERLINE=$(printf '%0.s-' $(seq 1 $LEN))
 
           if grep -q "^${FINAL_VER}" CHANGELOG.rst; then
-            # --- Update Existing Block ---
             START_LN=$(grep -n "^${FINAL_VER}" CHANGELOG.rst | head -n 1 | cut -d: -f1)
             END_LN=$(tail -n +$((START_LN + 1)) CHANGELOG.rst | grep -n -m 1 "^[0-9]" | cut -d: -f1)
             [ -z "$END_LN" ] && END_LN=$(wc -l < CHANGELOG.rst) || END_LN=$((START_LN + END_LN - 1))
             
-            # Extract and strip old bullets
             sed -n "${START_LN},${END_LN}p" CHANGELOG.rst | grep -v "\* Aligned" > block.tmp
-            
-            # Generate fresh bullets (including CLI)
             {
               echo "* Aligned **mapchete** to \`$M_REF\`"
               echo "* Aligned **mapchete-eo** to \`$EO_REF\`"
               echo "* Aligned **mapchete-hub** to \`$H_REF\`"
               is_valid "$C_REF" && echo "* Aligned **mapchete-hub-cli** to \`$C_REF\`"
             } > bullets.tmp
-            
             sed -i "4r bullets.tmp" block.tmp
             
-            # Reassemble file
             head -n $((START_LN - 1)) CHANGELOG.rst > changelog.new
             cat block.tmp >> changelog.new
             tail -n +$((END_LN + 1)) CHANGELOG.rst >> changelog.new
             mv changelog.new CHANGELOG.rst
           else
-            # --- New Block Entry ---
             {
               echo "$TITLE"
               echo "$UNDERLINE"
@@ -402,21 +403,14 @@ jobs:
               is_valid "$C_REF" && echo "* Aligned **mapchete-hub-cli** to \`$C_REF\`"
               echo ""
             } > new_block.tmp
-            
-            # Atomic file reconstruction to enforce spacing
-            # Lines 1-4 are the Main Header. 5-6 are the 2 blank lines.
             head -n 4 CHANGELOG.rst > changelog.new
-            echo "" >> changelog.new
-            echo "" >> changelog.new
+            echo "" >> changelog.new; echo "" >> changelog.new
             cat new_block.tmp >> changelog.new
-            
-            # Append everything from the old file starting AFTER the header (Line 5+)
-            # but using 'cat -s' later to squeeze accidental triple spaces
             tail -n +5 CHANGELOG.rst >> changelog.new
             mv changelog.new CHANGELOG.rst
           fi
 
-          # Final Polish: Squeeze blank lines and remove trailing whitespace
+          # Final Polish
           cat -s CHANGELOG.rst | sed 's/[[:space:]]*$//' > CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.rst
 
       - name: Automated Version PR
