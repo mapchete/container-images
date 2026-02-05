@@ -17,105 +17,187 @@ on:
       mapchete-hub-cli-ref: { type: string, default: '' }
 
 jobs:
-# ==========================================
-# 📋 PREPARATION: Metadata & Resolution
-# ==========================================
+# ==============================================================================
+# 📋 PREPARE: RESOLVE CONTEXT & VERSIONING
+# ==============================================================================
   prepare:
-    name: 🔍 Resolve Build Context
+    name: 🔍 Resolve Context
     runs-on: ubuntu-latest
     outputs:
       run-build: ${{ steps.check.outputs.run }}
+      # Refs
       mapchete-ref: ${{ steps.resolve.outputs.mapchete }}
       mapchete-eo-ref: ${{ steps.resolve.outputs.eo }}
       mapchete-hub-ref: ${{ steps.resolve.outputs.hub }}
       mapchete-hub-cli-ref: ${{ steps.resolve.outputs.cli }}
+      # Versioning
       calculated-tag: ${{ steps.version.outputs.tag }}
       mode: ${{ steps.version.outputs.mode }}
       use_branch: ${{ steps.version.outputs.use_branch }}
       target_latest: ${{ steps.version.outputs.target_latest }}
 
     steps:
-      - name: ⬇️ Checkout Repository
+      - name: ⬇️ Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        with: { fetch-depth: 0 }
 
-      - name: 🚦 Incoming Event Check
+      - name: 🚦 Decision Check
         id: check
         shell: bash
         run: |
-          if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+          EVENT="${{ github.event_name }}"
+          if [[ "$EVENT" == "repository_dispatch" ]]; then
             S="${{ github.event.client_payload.source_repo }}"
             T="${{ inputs.image-name }}"
-            if [[ "$T" == "mapchete" && "$S" =~ ^mapchete(-eo|-hub)?$ ]]; then echo "run=true" >> "$GITHUB_OUTPUT"
-            elif [[ "$T" =~ ^mhub-cli-(light|full)$ && "$S" == "mapchete-hub-cli" ]]; then echo "run=true" >> "$GITHUB_OUTPUT"
-            else echo "run=false" >> "$GITHUB_OUTPUT"; fi
+            if [[ "$T" == "mapchete" && "$S" =~ ^mapchete(-eo|-hub)?$ ]]; then
+              echo "run=true" >> "$GITHUB_OUTPUT"
+            elif [[ "$T" =~ ^mhub-cli-(light|full)$ && "$S" == "mapchete-hub-cli" ]]; then
+              echo "run=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "run=false" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: 🏷️ Version & Mode of the Build
+      - name: "🏷️ Strategy: Version & Mode"
         id: version
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          EVENT="${{ github.event_name }}"
+          P_TYPE="${{ github.event.client_payload.type }}"
           PREFIX="$(date +'%Y.%-m')."
           git fetch origin 
-          
-          if [[ "${{ github.ref_type }}" == "tag" ]] || [[ "${{ github.event_name }}" == "release" ]]; then
-            echo "mode=release" >> "$GITHUB_OUTPUT"
-            TAG_NAME="${{ github.event.release.tag_name || github.ref_name }}"
-            echo "tag=$TAG_NAME" >> "$GITHUB_OUTPUT"
-            echo "use_branch=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-            echo "target_latest=true" >> "$GITHUB_OUTPUT"
 
-          elif [[ "${{ github.event_name }}" == "pull_request" ]] || [[ "${{ github.event.client_payload.type }}" == "version" ]]; then
-            [[ "${{ github.event_name }}" == "pull_request" ]] && echo "mode=pr" >> "$GITHUB_OUTPUT" || echo "mode=rc" >> "$GITHUB_OUTPUT"
-            [[ "${{ github.event_name }}" == "pull_request" ]] && echo "use_branch=${{ github.head_ref }}" >> "$GITHUB_OUTPUT" || echo "use_branch=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-            [[ "${{ github.event_name }}" == "pull_request" ]] && echo "target_latest=false" >> "$GITHUB_OUTPUT" || echo "target_latest=true" >> "$GITHUB_OUTPUT"
+          # 1. RELEASE MODE (Tags)
+          if [[ "${{ github.ref_type }}" == "tag" ]] || [[ "$EVENT" == "release" ]]; then
+            MODE="release"
+            TAG_NAME="${{ github.ref_name }}"
+            [[ "$EVENT" == "release" ]] && TAG_NAME="${{ github.event.release.tag_name }}"
+            USE_BRANCH="$TAG_NAME"
+            TARGET_LATEST="true"
 
-            EXIST_RC=$(git branch -r | grep "origin/rc/${{ inputs.image-name }}-$PREFIX" | head -n 1 | sed 's|.*origin/||' || echo "")
-            if [[ -n "$EXIST_RC" ]]; then
-              echo "tag=$(echo "$EXIST_RC" | sed 's/.*-//')" >> "$GITHUB_OUTPUT"
+          # 2. RC or PR MODE (Version Computation Needed)
+          elif [[ "$EVENT" == "pull_request" ]] || [[ "$P_TYPE" == "version" ]] || [[ "$EVENT" == "workflow_dispatch" && -z "${{ inputs.image-tag }}" ]]; then
+            # Determine if this is a PR or an RC dispatch
+            if [[ "$EVENT" == "pull_request" ]]; then
+              MODE="pr"
+              TARGET_LATEST="false"
+              USE_BRANCH="${{ github.head_ref }}"
             else
-              TAGS=$(gh api "/orgs/mapchete/packages/container/${{ inputs.image-name }}/versions" --jq '.[].metadata.container.tags[]' 2>/dev/null || echo "")
-              LATEST=$(echo "$TAGS" | grep "^$PREFIX" | sed "s/$PREFIX//" | sort -nr | head -n1 || echo "-1")
-              echo "tag=${PREFIX}$((LATEST + 1))" >> "$GITHUB_OUTPUT"
+              MODE="rc"
+              TARGET_LATEST="true"
+              USE_BRANCH="${{ github.ref_name }}"
             fi
+
+            # --- COMPUTE NEXT VERSION ---
+            # Search for an existing RC branch for this month
+            EXIST_RC=$(git branch -r | grep "origin/rc/${{ inputs.image-name }}-$PREFIX" | head -n 1 | sed 's|.*origin/||' || echo "")
+            
+            if [[ -n "$EXIST_RC" ]]; then
+              # Re-use version from existing RC branch
+              USE_BRANCH="$EXIST_RC"
+              TAG_NAME=$(echo "$EXIST_RC" | sed 's/.*-//')
+            else
+              # Query GHCR for the highest existing patch number for this month
+              TAGS=$(gh api "/orgs/mapchete/packages/container/${{ inputs.image-name }}/versions" --jq '.[].metadata.container.tags[]' 2>/dev/null || echo "")
+              LATEST_CTR=$(echo "$TAGS" | grep "^$PREFIX" | sed "s/$PREFIX//" | sort -nr | head -n1)
+              
+              if [[ -z "$LATEST_CTR" ]]; then
+                TAG_NAME="${PREFIX}0"
+              else
+                TAG_NAME="${PREFIX}$((LATEST_CTR + 1))"
+              fi
+            fi
+            # ----------------------------
+
+          # 3. DEV MODE (Manual builds with specific tags or branch pushes)
           else
-            echo "mode=dev" >> "$GITHUB_OUTPUT"
-            echo "tag=${{ inputs.image-tag || 'dev' }}" >> "$GITHUB_OUTPUT"
-            echo "use_branch=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-            echo "target_latest=false" >> "$GITHUB_OUTPUT"
+            MODE="dev"
+            TAG_NAME="${{ inputs.image-tag || 'dev' }}"
+            USE_BRANCH="${{ github.ref_name }}"
+            TARGET_LATEST="false"
           fi
 
-      - name: 🧩 Component Refs
+          echo "tag=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "use_branch=$USE_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "target_latest=$TARGET_LATEST" >> "$GITHUB_OUTPUT"
+
+      - name: Pivot to RC Branch
+        if: steps.version.outputs.mode == 'rc' && steps.version.outputs.use_branch != github.ref_name
+        run: git checkout ${{ steps.version.outputs.use_branch }}
+
+      - name: "🧩 Strategy: Component Refs"
         id: resolve
         shell: bash
         run: |
+          touch versions.yml
           MODE="${{ steps.version.outputs.mode }}"
-          TRACK=$([[ "$MODE" =~ ^(rc|release)$ ]] && echo "_RELEASE" || echo "_ROLLING")
-          
-          resolve_ref() {
-            local repo_name="$1"
-            local manual="$2"
-            local key="MAPCHETE_${3}_REF${TRACK}"
-            local current
-            current=$(grep "^$key:" versions.yml | awk '{print $2}' || echo "main")
-            
-            if [[ "${{ github.event.client_payload.source_repo }}" == "$repo_name" ]]; then
-               if [[ "$MODE" =~ ^(rc|release)$ ]]; then echo "${{ github.event.client_payload.image_tag }}"; else echo "${{ github.event.client_payload.sha }}"; fi
-            elif [[ -n "$manual" ]]; then echo "$manual"
-            else echo "${current:-main}"; fi
+          # Track determines if we look at _RELEASE or _ROLLING in versions.yml
+          TRACK=$([[ "$MODE" == "rc" || "$MODE" == "release" ]] && echo "_RELEASE" || echo "_ROLLING")
+
+          get_cur() { 
+            local val=$(grep "^$1:" versions.yml | awk -F': ' '{print $2}' | tr -d '\r\n ' || echo "")
+            [[ -z "$val" || "$val" == "null" ]] && echo "main" || echo "$val"
           }
 
-          echo "mapchete=$(resolve_ref 'mapchete' '${{ inputs.mapchete-ref }}' '')" >> "$GITHUB_OUTPUT"
-          echo "eo=$(resolve_ref 'mapchete-eo' '${{ inputs.mapchete-eo-ref }}' 'EO')" >> "$GITHUB_OUTPUT"
-          echo "hub=$(resolve_ref 'mapchete-hub' '${{ inputs.mapchete-hub-ref }}' 'HUB')" >> "$GITHUB_OUTPUT"
-          echo "cli=$(resolve_ref 'mapchete-hub-cli' '${{ inputs.mapchete-hub-cli-ref }}' 'HUB_CLI')" >> "$GITHUB_OUTPUT"
+          M_CUR=$(get_cur "MAPCHETE_REF${TRACK}")
+          EO_CUR=$(get_cur "MAPCHETE_EO_REF${TRACK}")
+          HUB_CUR=$(get_cur "MAPCHETE_HUB_REF${TRACK}")
+          CLI_CUR=$(get_cur "MAPCHETE_HUB_CLI_REF${TRACK}")
 
-      - name: 📊 Generate Preparation Summary
+          # 1. DISPATCH LOGIC (Mode-Aware)
+          D_REPO="${{ github.event.client_payload.source_repo }}"
+          P_SHA="${{ github.event.client_payload.sha }}"
+          P_TAG="${{ github.event.client_payload.image_tag }}"
+          
+          # If we are in RC/Release mode, prioritize the Tag (2026.x.x)
+          # If in Dev/Rolling mode, prioritize the SHA
+          if [[ "$MODE" == "rc" || "$MODE" == "release" ]]; then
+            D_REF=$([[ -n "$P_TAG" && "$P_TAG" != "null" ]] && echo "$P_TAG" || echo "$P_SHA")
+          else
+            D_REF=$([[ -n "$P_SHA" && "$P_SHA" != "null" ]] && echo "$P_SHA" || echo "$P_TAG")
+          fi
+
+          # 2. RESOLUTION FUNCTION
+          resolve_ref() {
+            local repo_name=$1
+            local manual_input=$2
+            local current_track_val=$3
+            
+            # Priority 1: Triggering Repo (The Dispatcher)
+            if [[ "$D_REPO" == "$repo_name" && -n "$D_REF" && "$D_REF" != "null" ]]; then
+              echo "$D_REF"
+            # Priority 2: Manual Workflow Input
+            elif [[ -n "$manual_input" && "$manual_input" != "null" ]]; then
+              echo "$manual_input"
+            # Priority 3: versions.yml Fallback (Crucial for MAPCHETE_HUB_REF)
+            else
+              echo "$current_track_val"
+            fi
+          }
+
+          # 3. Execution
+          M_F=$(resolve_ref "mapchete" "${{ inputs.mapchete-ref }}" "$M_CUR")
+          EO_F=$(resolve_ref "mapchete-eo" "${{ inputs.mapchete-eo-ref }}" "$EO_CUR")
+          H_F=$(resolve_ref "mapchete-hub" "${{ inputs.mapchete-hub-ref }}" "$HUB_CUR")
+          C_F=$(resolve_ref "mapchete-hub-cli" "${{ inputs.mapchete-hub-cli-ref }}" "$CLI_CUR")
+
+          # Normalize function ensures we never pass empty strings to build-args
+          normalize() {
+            local v=$(echo "$1" | tr -d ' ')
+            [[ -z "$v" || "$v" == "null" || "$v" == "latest" ]] && echo "main" || echo "$v"
+          }
+          
+          echo "mapchete=$(normalize $M_F)" >> "$GITHUB_OUTPUT"
+          echo "eo=$(normalize $EO_F)" >> "$GITHUB_OUTPUT"
+          echo "hub=$(normalize $H_F)" >> "$GITHUB_OUTPUT"
+          echo "cli=$(normalize $C_F)" >> "$GITHUB_OUTPUT"
+
+      - name: 📊 Generate Dashboard
         if: always()
         shell: bash
         run: |
@@ -126,7 +208,6 @@ jobs:
             echo "## 🛑 BUILD SKIPPED" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-          # 2. Variable Prep
           MODE="${{ steps.version.outputs.mode }}"
           TAG="${{ steps.version.outputs.tag }}"
           LATEST="${{ steps.version.outputs.target_latest }}"
@@ -138,19 +219,20 @@ jobs:
             ACTIVE_TRACK="ROLLING 🌀 (Latest)"
           fi
 
-          if [[ "$MODE" == "rc" ]]; then FINAL_TAGS="\`rc-$TAG\`"; else FINAL_TAGS="\`$TAG\`"; fi
-          [[ "$LATEST" == "true" || "${{ github.ref_name }}" == "main" ]] && FINAL_TAGS="$FINAL_TAGS, \`latest\`"
+          # Tag Preview Logic
+          if [[ "$MODE" == "rc" ]]; then TAG_PRE="rc-$TAG"; else TAG_PRE="$TAG"; fi
+          [[ "$LATEST" == "true" ]] && TAG_PRE="$TAG_PRE, latest"
 
-          # 3. Tables
+          # 2. Render Table
           cat <<EOF >> "$GITHUB_STEP_SUMMARY"
           ---
           ### 🛠️ Build Preparation Summary
           | Property | Value |
           | :--- | :--- |
           | **Target Image** | \`${{ inputs.image-name }}\` |
-          | **Operation Mode** | \`${MODE:-N/A}\` |
-          | **Resolution Track** | **$ACTIVE_TRACK** |
-          | **Registry Tags** | $FINAL_TAGS |
+          | **Mode** | \`${MODE:-N/A}\` |
+          | **Track** | **$ACTIVE_TRACK** |
+          | **Registry Tags** | \`$TAG_PRE\` |
           | **Trigger Event** | \`$EVENT\` |
 
           #### 📦 Resolved Component Versions
@@ -158,30 +240,33 @@ jobs:
 
           | Component | Resolved Reference |
           | :--- | :--- |
-          | **mapchete** | \`${{ steps.resolve.outputs.mapchete || 'main' }}\` |
-          | **mapchete-eo** | \`${{ steps.resolve.outputs.eo || 'main' }}\` |
-          | **mapchete-hub** | \`${{ steps.resolve.outputs.hub || 'main' }}\` |
-          | **mapchete-hub-cli** | \`${{ steps.resolve.outputs.cli || 'main' }}\` |
+          | **mapchete** | \`${{ steps.resolve.outputs.mapchete }}\` |
+          | **mapchete-eo** | \`${{ steps.resolve.outputs.eo }}\` |
+          | **mapchete-hub** | \`${{ steps.resolve.outputs.hub }}\` |
+          | **mapchete-hub-cli** | \`${{ steps.resolve.outputs.cli }}\` |
           EOF
 
-# ==========================================
-# 🛠️ BUILD: Execution & Push
-# ==========================================
+# ==============================================================================
+# 📦 BUILD: DOCKER & TESTS
+# ==============================================================================
   build:
     name: 📦 Build and Push
     needs: prepare
     if: needs.prepare.outputs.run-build == 'true'
     runs-on: ubuntu-latest
-    permissions: { contents: write, packages: write }
+    permissions:
+      contents: write
+      packages: write
+      pull-requests: write
     steps:
-      - name: ⬇️ Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with: 
           ref: ${{ needs.prepare.outputs.use_branch }}
 
       - name: 🧬 Compare Fingerprints
         id: fingerprint
         run: |
+          # Build candidate to get local fingerprint
           docker build -t candidate \
             --build-arg MAPCHETE_REF=${{ needs.prepare.outputs.mapchete-ref }} \
             --build-arg MAPCHETE_EO_REF=${{ needs.prepare.outputs.mapchete-eo-ref }} \
@@ -190,23 +275,63 @@ jobs:
             "${{ inputs.image-name }}/"
           
           LOCAL_FP=$(docker run --rm --entrypoint cat candidate /app/uv_fingerprint)
-          REMOTE_FP=$(skopeo inspect "docker://ghcr.io/mapchete/${{ inputs.image-name }}:latest" 2>/dev/null | jq -r '.Labels["org.mapchete.image_fingerprint"]' || echo "none")
+          
+          # Check Remote
+          REMOTE_IMAGE="ghcr.io/mapchete/${{ inputs.image-name }}:latest"
+          REMOTE_FP=$(skopeo inspect "docker://$REMOTE_IMAGE" 2>/dev/null | jq -r '.Labels["org.mapchete.image_fingerprint"] // "none"' | tr -d '\r\n ')
+
           echo "fp=$LOCAL_FP" >> "$GITHUB_OUTPUT"
-          [[ "$LOCAL_FP" == "$REMOTE_FP" ]] && echo "changed=false" >> "$GITHUB_OUTPUT" || echo "changed=true" >> "$GITHUB_OUTPUT"
+          
+          if [[ "$LOCAL_FP" == "$REMOTE_FP" ]]; then
+            echo "✅ Match. Up to date."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            
+            # Retrieve old refs for Changelog if we are skipping build in RC mode
+            if [[ "${{ needs.prepare.outputs.mode }}" == "rc" ]]; then
+              docker pull "$REMOTE_IMAGE"
+              get_ver() { docker run --rm "$REMOTE_IMAGE" uv pip list | grep "^$1 " | awk '{print $2}' | tr -d '\r\n' || echo "N/A"; }
+              echo "m_ref=$(get_ver mapchete)" >> "$GITHUB_OUTPUT"
+              echo "eo_ref=$(get_ver mapchete-eo)" >> "$GITHUB_OUTPUT"
+              echo "hub_ref=$(get_ver mapchete-hub)" >> "$GITHUB_OUTPUT"
+              echo "cli_ref=$(get_ver mapchete-hub-cli)" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "⚠️ Mismatch. Build required."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: 🧪 Integration Test
         if: inputs.image-name == 'mapchete' && steps.fingerprint.outputs.changed == 'true'
         run: docker run --rm candidate /bin/bash -c "cd deps/mapchete-eo && uv run pytest"
 
-      - name: 🚀 Build & Push
+      - uses: docker/login-action@v3
+        if: steps.fingerprint.outputs.changed == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 🏷️ Metadata Action: Handles the complex tagging logic cleanly
+      - id: meta
+        if: steps.fingerprint.outputs.changed == 'true' || needs.prepare.outputs.mode == 'rc'
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/mapchete/${{ inputs.image-name }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=rc-${{ needs.prepare.outputs.calculated-tag }},enable=${{ needs.prepare.outputs.mode == 'rc' }}
+            type=raw,value=${{ needs.prepare.outputs.calculated-tag }},enable=${{ needs.prepare.outputs.mode != 'rc' && needs.prepare.outputs.mode != 'dev' }}
+            type=raw,value=dev,enable=${{ needs.prepare.outputs.mode == 'dev' }}
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.target_latest == 'true' }}
+            type=raw,value=${{ inputs.image-tag }},enable=${{ inputs.image-tag != '' }}
+
+      - name: 🚀 Push Image
         if: steps.fingerprint.outputs.changed == 'true'
         uses: docker/build-push-action@v5
         with:
           context: "${{ inputs.image-name }}/"
           push: true
-          tags: |
-            ghcr.io/mapchete/${{ inputs.image-name }}:${{ needs.prepare.outputs.calculated-tag }}
-            ghcr.io/mapchete/${{ inputs.image-name }}:latest
+          tags: ${{ steps.meta.outputs.tags }}
           build-args: |
             MAPCHETE_REF=${{ needs.prepare.outputs.mapchete-ref }}
             MAPCHETE_EO_REF=${{ needs.prepare.outputs.mapchete-eo-ref }}
@@ -214,17 +339,14 @@ jobs:
             MAPCHETE_HUB_CLI_REF=${{ needs.prepare.outputs.mapchete-hub-cli-ref }}
             IMAGE_FINGERPRINT=${{ steps.fingerprint.outputs.fp }}
 
-      - name: 📝 Update Tracking Metadata
+      - name: 📝 Update Tracking & PR
         if: needs.prepare.outputs.mode == 'rc'
         shell: bash
         run: |
-          # 1. Setup Variables
-          PUSH_DATE=$(date +'%Y-%m-%d')
-          echo "PUSH_DATE=$PUSH_DATE" >> "$GITHUB_ENV"
+          PUSH_DATE=$(date +'%Y-%m-%d'); echo "PUSH_DATE=$PUSH_DATE" >> "$GITHUB_ENV"
           FINAL_VER="${{ needs.prepare.outputs.calculated-tag }}"
           
-          # 2. Select Release Track Pins
-          # Use resolved refs if build changed, otherwise use what we detected in the image
+          # 1. Select Correct Refs
           if [[ "${{ steps.fingerprint.outputs.changed }}" == "true" ]]; then
             M_REF="${{ needs.prepare.outputs.mapchete-ref }}"
             EO_REF="${{ needs.prepare.outputs.mapchete-eo-ref }}"
@@ -237,26 +359,23 @@ jobs:
             C_REF="${{ steps.fingerprint.outputs.cli_ref }}"
           fi
           
-          # 3. Update versions.yml Logic
+          # 2. Update versions.yml
           update_yaml() {
-            local key="$1"
-            local val="$2"
-            if [[ -n "$val" && "$val" != "null" && "$val" != "N/A" ]]; then
-              sed -i "s/^${key}:.*/${key}: ${val}/" versions.yml
-            fi
+            local key="$1"; local val="$2"
+            [[ -n "$val" && "$val" != "null" && "$val" != "N/A" ]] && sed -i "s/^${key}:.*/${key}: ${val}/" versions.yml
           }
-
           update_yaml "MAPCHETE_REF_RELEASE" "$M_REF"
           update_yaml "MAPCHETE_EO_REF_RELEASE" "$EO_REF"
           update_yaml "MAPCHETE_HUB_REF_RELEASE" "$H_REF"
           update_yaml "MAPCHETE_HUB_CLI_REF_RELEASE" "$C_REF"
 
-          # 4. Handle CHANGELOG.rst
+          # 3. Update CHANGELOG.rst
           is_valid() { [[ -n "$1" && "$1" != "null" && "$1" != "N/A" ]]; }
           TITLE="${FINAL_VER} - ${PUSH_DATE}"
           LEN=${#TITLE}
           UNDERLINE=$(printf '%0.s-' $(seq 1 "$LEN"))
 
+          # Insert or Replace block
           if grep -q "^${FINAL_VER}" CHANGELOG.rst; then
             START_LN=$(grep -n "^${FINAL_VER}" CHANGELOG.rst | head -n 1 | cut -d: -f1)
             END_LN=$(tail -n +$((START_LN + 1)) CHANGELOG.rst | grep -n -m 1 "^[0-9]" | cut -d: -f1)
@@ -290,11 +409,9 @@ jobs:
             tail -n +5 CHANGELOG.rst >> changelog.new
             mv changelog.new CHANGELOG.rst
           fi
-
-          # 5. Final Formatting
           cat -s CHANGELOG.rst | sed 's/[[:space:]]*$//' > CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.rst
 
-      - name: 📬 Automated Version PR
+      - name: 📬 Automated RC PR
         if: needs.prepare.outputs.mode == 'rc'
         uses: peter-evans/create-pull-request@v7
         with:
@@ -307,32 +424,26 @@ jobs:
           title: "🧪 RC: ${{ inputs.image-name }} ${{ needs.prepare.outputs.calculated-tag }}"
           body: |
             ### 🧪 Release Candidate Update
-            This PR freezes the component alignment for version `${{ needs.prepare.outputs.calculated-tag }}`.
+            Freezing component alignment for version `${{ needs.prepare.outputs.calculated-tag }}`.
 
             **Build Status:** ${{ steps.fingerprint.outputs.changed == 'true' && '🚀 New Image Pushed' || '✅ Reusing Existing Image' }}
             **Push Date:** `${{ env.PUSH_DATE }}`
             
-            #### 📦 Component Alignment (Release Track)
+            #### 📦 Component Alignment
             | Component | Reference |
             | :--- | :--- |
             ${{ needs.prepare.outputs.mapchete-ref != '' && format('| **mapchete** | `{0}` |', needs.prepare.outputs.mapchete-ref) || '' }}
             ${{ needs.prepare.outputs.mapchete-eo-ref != '' && format('| **mapchete-eo** | `{0}` |', needs.prepare.outputs.mapchete-eo-ref) || '' }}
             ${{ needs.prepare.outputs.mapchete-hub-ref != '' && format('| **mapchete-hub** | `{0}` |', needs.prepare.outputs.mapchete-hub-ref) || '' }}
             ${{ needs.prepare.outputs.mapchete-hub-cli-ref != '' && format('| **mapchete-hub-cli** | `{0}` |', needs.prepare.outputs.mapchete-hub-cli-ref) || '' }}
-
-            ---
-            #### 📡 Trigger Context
-            - **Source:** `${{ github.event.client_payload.source_repo || 'Manual Run' }}`
-            - **Event:** `${{ github.event_name }}`
-
           base: main
           delete-branch: true
           assignees: "scartography"
           reviewers: "ungarj"
 
-# ==========================================
-# 🧹 CLEANUP: Registry Housekeeping
-# ==========================================
+# ==============================================================================
+# 🧹 CLEANUP: REGISTRY HYGIENE
+# ==============================================================================
   cleanup:
     name: 🧹 Cleanup
     needs: [prepare, build]
