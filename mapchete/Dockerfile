@@ -38,9 +38,9 @@ RUN MAPCHETE_SHA=$(git -C deps/mapchete rev-parse HEAD) && \
     EO_SHA=$(git -C deps/mapchete-eo rev-parse HEAD) && \
     HUB_SHA=$(git -C deps/mapchete-hub rev-parse HEAD) && \
     uv add --constraints requirements.txt \
-      "mapchete @ git+https://github.com/mapchete/mapchete.git@$MAPCHETE_SHA" \
+      "mapchete[complete] @ git+https://github.com/mapchete/mapchete.git@$MAPCHETE_SHA" \
       "mapchete-eo @ git+https://github.com/mapchete/mapchete-eo.git@$EO_SHA" \
-      "mapchete-hub @ git+https://github.com/mapchete/mapchete-hub.git@$HUB_SHA"
+      "mapchete-hub[deployment] @ git+https://github.com/mapchete/mapchete-hub.git@$HUB_SHA"
 
 # Generate the fingerprint based on the resolved lockfile
 # Combine the lockfile hash AND a hash of the source code 
