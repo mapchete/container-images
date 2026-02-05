@@ -13,7 +13,7 @@ RUN mkdir -p deps/mapchete-hub-cli
 RUN git clone https://github.com/mapchete/mapchete-hub-cli deps/mapchete-hub-cli && \
     cd deps/mapchete-hub-cli && git checkout ${MAPCHETE_HUB_CLI_REF}
 
-RUN uv export --frozen --project deps/mapchete-hub-clihete >> raw.txt && \
+RUN uv export --frozen --project deps/mapchete-hub-cli >> raw.txt && \
     grep '==' raw.txt | \
     grep -v "mapchete" | \
     sed 's/[[:space:];\\].*//' | sort -V | \
