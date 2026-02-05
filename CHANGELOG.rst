@@ -7,8 +7,8 @@ Changelog
 
 * Aligned **mapchete** to `2026.2.1`
 * Aligned **mapchete-eo** to `2026.2.0`
-* Aligned **mapchete-hub** to `2025.11.0`
-
+* Aligned **mapchete-hub** to `c96a02b18551365f57983a82e44aae36c191e15b`
+* Aligned **mapchete-hub-cli** to `2025.9.0`
 ---------------------
 2026.1.1 - 2026-01-12
 ---------------------
