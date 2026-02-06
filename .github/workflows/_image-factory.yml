@@ -188,7 +188,7 @@ jobs:
           echo "cli=$(norm $(resolve_ref 'mapchete-hub-cli' '${{ inputs.mapchete-hub-cli-ref }}' 'HUB_CLI'))" >> "$GITHUB_OUTPUT"
 
       - name: 📊 Generate Dashboard
-        if: always() && inputs.enable-summary
+        if: always()
         shell: bash
         run: |
           MODE="${{ steps.version.outputs.mode }}"
