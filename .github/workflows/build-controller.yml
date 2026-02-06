@@ -43,6 +43,8 @@ jobs:
       mapchete-eo-ref: ${{ inputs.mapchete-eo-ref }}
       mapchete-hub-ref: ${{ inputs.mapchete-hub-ref }}
       mapchete-hub-cli-ref: ${{ inputs.mapchete-hub-cli-ref }}
+      enable-pr: false
+      enable-summary: false
     secrets: inherit
 
   mhub-cli-light:
@@ -54,6 +56,8 @@ jobs:
       mapchete-eo-ref: ${{ inputs.mapchete-eo-ref }}
       mapchete-hub-ref: ${{ inputs.mapchete-hub-ref }}
       mapchete-hub-cli-ref: ${{ inputs.mapchete-hub-cli-ref }}
+      enable-pr: false
+      enable-summary: false
     secrets: inherit
 
   mhub-cli-full:
@@ -65,4 +69,143 @@ jobs:
       mapchete-eo-ref: ${{ inputs.mapchete-eo-ref }}
       mapchete-hub-ref: ${{ inputs.mapchete-hub-ref }}
       mapchete-hub-cli-ref: ${{ inputs.mapchete-hub-cli-ref }}
+      enable-pr: false
+      enable-summary: false
     secrets: inherit
+
+  finalize:
+    name: 🏁 Finalize & Summary
+    needs: [mapchete, mhub-cli-light, mhub-cli-full]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: 📊 Consolidated Dashboard
+        shell: bash
+        run: |
+          # 1. RESOLVE GLOBAL CONTEXT (from any successful job)
+          MODE="${{ needs.mapchete.outputs.mode || needs.mhub-cli-light.outputs.mode || needs.mhub-cli-full.outputs.mode }}"
+          TRACK="${{ needs.mapchete.outputs.track || needs.mhub-cli-light.outputs.track || needs.mhub-cli-full.outputs.track }}"
+          TAG="${{ needs.mapchete.outputs.tag || needs.mhub-cli-light.outputs.tag || needs.mhub-cli-full.outputs.tag }}"
+          TRIGGER="${{ github.event_name }}"
+          
+          # Visual Track Label
+          [[ "$TRACK" == "_RELEASE" ]] && ACTIVE_TRACK="RELEASE 🧊 (Pinned)" || ACTIVE_TRACK="ROLLING 🌀 (Latest)"
+          
+          # Image Results Table
+          echo "## 🏗️ Build Factory Dashboard" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | Status | Fingerprint |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          
+          row() {
+            local name=$1; local res=$2; local fp=$3
+            if [[ "$res" == "true" ]]; then status="🚀 **Pushed**"; elif [[ "$res" == "false" ]]; then status="✅ **Up-to-date**"; else status="⚪ **Skipped**"; fi
+            echo "| \`$name\` | $status | \`${fp:-N/A}\` |" >> $GITHUB_STEP_SUMMARY
+          }
+          row "mapchete" "${{ needs.mapchete.outputs.changed }}" "${{ needs.mapchete.outputs.fp }}"
+          row "mhub-cli-light" "${{ needs.mhub-cli-light.outputs.changed }}" "${{ needs.mhub-cli-light.outputs.fp }}"
+          row "mhub-cli-full" "${{ needs.mhub-cli-full.outputs.changed }}" "${{ needs.mhub-cli-full.outputs.fp }}"
+
+          # Component Alignment Table
+          M="${{ needs.mapchete.outputs.m-ref || needs.mhub-cli-light.outputs.m-ref || needs.mhub-cli-full.outputs.m-ref }}"
+          EO="${{ needs.mapchete.outputs.eo-ref || needs.mhub-cli-light.outputs.eo-ref || needs.mhub-cli-full.outputs.eo-ref }}"
+          HUB="${{ needs.mapchete.outputs.hub-ref || needs.mhub-cli-light.outputs.hub-ref || needs.mhub-cli-full.outputs.hub-ref }}"
+          CLI="${{ needs.mapchete.outputs.cli-ref || needs.mhub-cli-light.outputs.cli-ref || needs.mhub-cli-full.outputs.cli-ref }}"
+          
+          cat <<EOF >> $GITHUB_STEP_SUMMARY
+          
+          ### 📦 Component Alignment
+          > Strategy: **$ACTIVE_TRACK**
+          
+          | Component | Reference |
+          | :--- | :--- |
+          | **mapchete** | \`${M:-N/A}\` |
+          | **mapchete-eo** | \`${EO:-N/A}\` |
+          | **mapchete-hub** | \`${HUB:-N/A}\` |
+          | **mapchete-hub-cli** | \`${CLI:-N/A}\` |
+          EOF
+
+          # Export for next steps
+          echo "MODE=$MODE" >> "$GITHUB_ENV"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "TRACK=$TRACK" >> "$GITHUB_ENV"
+          echo "M_REF=$M" >> "$GITHUB_ENV"
+          echo "EO_REF=$EO" >> "$GITHUB_ENV"
+          echo "HUB_REF=$HUB" >> "$GITHUB_ENV"
+          echo "CLI_REF=$CLI" >> "$GITHUB_ENV"
+
+      - name: 📝 Update Tracking Pins
+        if: env.MODE == 'rc'
+        shell: bash
+        run: |
+          PUSH_DATE=$(date +'%Y-%m-%d')
+          update_yaml() { 
+            local k="$1"; local v="$2"
+            [[ -n "$v" && "$v" != "null" && "$v" != "N/A" ]] && sed -i "s/^${k}:.*/${k}: ${v}/" versions.yml
+          }
+          update_yaml "MAPCHETE_REF${TRACK}" "$M_REF"
+          update_yaml "MAPCHETE_EO_REF${TRACK}" "$EO_REF"
+          update_yaml "MAPCHETE_HUB_REF${TRACK}" "$HUB_REF"
+          update_yaml "MAPCHETE_HUB_CLI_REF${TRACK}" "$CLI_REF"
+
+          # Update Changelog
+          TITLE="${TAG} - ${PUSH_DATE}"
+          LEN=${#TITLE}; UNDERLINE=$(printf '%0.s-' $(seq 1 "$LEN"))
+          
+          {
+            echo "$TITLE"; echo "$UNDERLINE"; echo ""
+            echo "* Aligned **mapchete** to \`$M_REF\`"
+            echo "* Aligned **mapchete-eo** to \`$EO_REF\`"
+            echo "* Aligned **mapchete-hub** to \`$HUB_REF\`"
+            echo "* Aligned **mapchete-hub-cli** to \`$CLI_REF\`"
+            echo ""
+          } > new_block.tmp
+          
+          if grep -q "^${TAG}" CHANGELOG.rst; then
+             # Remove old block if exists
+             START_LN=$(grep -n "^${TAG}" CHANGELOG.rst | head -n 1 | cut -d: -f1)
+             END_LN=$(tail -n +$((START_LN + 1)) CHANGELOG.rst | grep -n -m 1 "^[0-9]" | cut -d: -f1)
+             [[ -z "$END_LN" ]] && END_LN=$(wc -l < CHANGELOG.rst) || END_LN=$((START_LN + END_LN - 1))
+             head -n $((START_LN - 1)) CHANGELOG.rst > changelog.new
+             cat new_block.tmp >> changelog.new
+             tail -n +$((END_LN + 1)) CHANGELOG.rst >> changelog.new
+          else
+             head -n 4 CHANGELOG.rst > changelog.new
+             echo "" >> changelog.new; cat new_block.tmp >> changelog.new
+             tail -n +5 CHANGELOG.rst >> changelog.new
+          fi
+          mv changelog.new CHANGELOG.rst
+          cat -s CHANGELOG.rst > CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.rst
+
+      - name: 📬 Single Automated PR
+        if: env.MODE == 'rc'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.MAPCHETE_PAT || secrets.GITHUB_TOKEN }}
+          commit-message: "rc: sync all image pins for ${{ env.TAG }}"
+          branch: "rc/sync-${{ env.TAG }}"
+          add-paths: |
+            versions.yml
+            CHANGELOG.rst
+          title: "🧪 RC: Multi-Image Sync ${{ env.TAG }}"
+          body: |
+            ### 🧪 Consolidated Release Candidate Update
+            Freezing component alignment for version `${{ env.TAG }}` across all images.
+
+            #### 📦 Component Alignment
+            | Component | Reference |
+            | :--- | :--- |
+            | **mapchete** | `${{ env.M_REF }}` |
+            | **mapchete-eo** | `${{ env.EO_REF }}` |
+            | **mapchete-hub** | `${{ env.HUB_REF }}` |
+            | **mapchete-hub-cli** | `${{ env.CLI_REF }}` |
+            
+            This PR was automatically generated after building all images.
+          base: main
+          delete-branch: true
+          assignees: "scartography"
+          reviewers: "ungarj"

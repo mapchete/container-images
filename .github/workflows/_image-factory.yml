@@ -15,6 +15,19 @@ on:
       mapchete-eo-ref: { type: string, default: '' }
       mapchete-hub-ref: { type: string, default: '' }
       mapchete-hub-cli-ref: { type: string, default: '' }
+      enable-pr: { type: boolean, default: true }
+      enable-summary: { type: boolean, default: true }
+
+    outputs:
+      mode: { description: "Execution mode", value: "${{ jobs.prepare.outputs.mode }}" }
+      track: { description: "Execution track", value: "${{ jobs.prepare.outputs.track }}" }
+      tag: { description: "Calculated tag", value: "${{ jobs.prepare.outputs.calculated-tag }}" }
+      changed: { description: "Whether the image was rebuilt", value: "${{ jobs.build.outputs.changed }}" }
+      fp: { description: "The build fingerprint", value: "${{ jobs.build.outputs.fp }}" }
+      m-ref: { description: "Final mapchete ref", value: "${{ jobs.build.outputs.m_ref }}" }
+      eo-ref: { description: "Final mapchete-eo ref", value: "${{ jobs.build.outputs.eo_ref }}" }
+      hub-ref: { description: "Final mapchete-hub ref", value: "${{ jobs.build.outputs.hub_ref }}" }
+      cli-ref: { description: "Final mapchete-hub-cli ref", value: "${{ jobs.build.outputs.cli_ref }}" }
 
 jobs:
 # ==============================================================================
@@ -175,7 +188,7 @@ jobs:
           echo "cli=$(norm $(resolve_ref 'mapchete-hub-cli' '${{ inputs.mapchete-hub-cli-ref }}' 'HUB_CLI'))" >> "$GITHUB_OUTPUT"
 
       - name: 📊 Generate Dashboard
-        if: always()
+        if: always() && inputs.enable-summary
         shell: bash
         run: |
           MODE="${{ steps.version.outputs.mode }}"
@@ -246,6 +259,13 @@ jobs:
       contents: write
       packages: write
       pull-requests: write
+    outputs:
+      changed: ${{ steps.fingerprint.outputs.changed }}
+      fp: ${{ steps.fingerprint.outputs.fp }}
+      m_ref: ${{ steps.fingerprint.outputs.m_ref || needs.prepare.outputs.mapchete-ref }}
+      eo_ref: ${{ steps.fingerprint.outputs.eo_ref || needs.prepare.outputs.mapchete-eo-ref }}
+      hub_ref: ${{ steps.fingerprint.outputs.hub_ref || needs.prepare.outputs.mapchete-hub-ref }}
+      cli_ref: ${{ steps.fingerprint.outputs.cli_ref || needs.prepare.outputs.mapchete-hub-cli-ref }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -329,7 +349,7 @@ jobs:
             IMAGE_FINGERPRINT=${{ steps.fingerprint.outputs.fp }}
 
       - name: 📝 Update Tracking & PR
-        if: needs.prepare.outputs.mode == 'rc'
+        if: needs.prepare.outputs.mode == 'rc' && inputs.enable-pr
         shell: bash
         run: |
           PUSH_DATE=$(date +'%Y-%m-%d'); echo "PUSH_DATE=$PUSH_DATE" >> "$GITHUB_ENV"
@@ -396,7 +416,7 @@ jobs:
           cat -s CHANGELOG.rst | sed 's/[[:space:]]*$//' > CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.rst
 
       - name: 📬 Automated RC PR
-        if: needs.prepare.outputs.mode == 'rc'
+        if: needs.prepare.outputs.mode == 'rc' && inputs.enable-pr
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.MAPCHETE_PAT || secrets.GITHUB_TOKEN }}
@@ -427,7 +447,7 @@ jobs:
 
       # 📊 FINAL STATUS: Appends to the Dashboard
       - name: 📊 Build Outcome
-        if: always()
+        if: always() && inputs.enable-summary
         run: |
           CHANGED="${{ steps.fingerprint.outputs.changed }}"
           FP="${{ steps.fingerprint.outputs.fp }}"
