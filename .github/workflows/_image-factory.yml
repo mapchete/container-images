@@ -52,14 +52,19 @@ jobs:
         run: |
           EVENT="${{ github.event_name }}"
           if [[ "$EVENT" == "repository_dispatch" ]]; then
-            S="${{ github.event.client_payload.source_repo }}"
-            T="${{ inputs.image-name }}"
-            if [[ "$T" == "mapchete" && "$S" =~ ^mapchete(-eo|-hub)?$ ]]; then
-              echo "run=true" >> "$GITHUB_OUTPUT"
-            elif [[ "$T" =~ ^mhub-cli-(light|full)$ && "$S" == "mapchete-hub-cli" ]]; then
+            # Rebuild everything if it's a cross-repo version bump (RC / Release / Tag)
+            if [[ "${{ github.event.client_payload.type }}" == "version" ]] || [[ "${{ github.event.client_payload.image_tag }}" =~ ^(rc-)?[0-9]+\.[0-9]+\.[0-9]+ ]]; then
               echo "run=true" >> "$GITHUB_OUTPUT"
             else
-              echo "run=false" >> "$GITHUB_OUTPUT"
+              S="${{ github.event.client_payload.source_repo }}"
+              T="${{ inputs.image-name }}"
+              if [[ "$T" == "mapchete" && "$S" =~ ^mapchete(-eo|-hub)?$ ]]; then
+                echo "run=true" >> "$GITHUB_OUTPUT"
+              elif [[ "$T" =~ ^mhub-cli-(light|full)$ && "$S" == "mapchete-hub-cli" ]]; then
+                echo "run=true" >> "$GITHUB_OUTPUT"
+              else
+                echo "run=false" >> "$GITHUB_OUTPUT"
+              fi
             fi
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
@@ -87,9 +92,10 @@ jobs:
           }
 
           # 1. DETERMINE MODE & BRANCH
+          REF_NAME="${{ github.event.release.tag_name || github.ref_name }}"
           if [[ "${{ github.ref_type }}" == "tag" ]] || [[ "$EVENT" == "release" ]]; then
-            MODE="release"
-            BRANCH="${{ github.event.release.tag_name || github.ref_name }}"
+            if [[ "$REF_NAME" =~ ^rc- ]]; then MODE="rc"; else MODE="release"; fi
+            BRANCH="$REF_NAME"
             TAG="$BRANCH"
             LATEST="true"
 
@@ -150,7 +156,9 @@ jobs:
           MODE="${{ steps.version.outputs.mode }}"
           
           resolve_ref() {
-            local repo=$1; local manual=$2; local key="MAPCHETE_${3}_REF${TRACK}"
+            local repo=$1; local manual=$2; 
+            local pfx="MAPCHETE"; [[ -n "$3" ]] && pfx="${pfx}_${3}"
+            local key="${pfx}_REF${TRACK}"
             local cur=$(grep "^$key:" versions.yml | awk '{print $2}' || echo "main")
             
             if [[ "${{ github.event.client_payload.source_repo }}" == "$repo" ]]; then
