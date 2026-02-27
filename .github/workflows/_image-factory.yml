@@ -107,10 +107,15 @@ jobs:
           # 1. DETERMINE MODE & BRANCH
           REF_NAME="${{ github.event.release.tag_name || github.ref_name }}"
           if [[ "${{ github.ref_type }}" == "tag" ]] || [[ "$EVENT" == "release" ]]; then
-            if [[ "$REF_NAME" =~ ^rc- ]]; then MODE="rc"; else MODE="release"; fi
+            if [[ "$REF_NAME" =~ ^rc- ]]; then 
+              MODE="rc"
+              LATEST="true"
+            else 
+              MODE="release"
+              LATEST="false"
+            fi
             BRANCH="$REF_NAME"
             TAG="$BRANCH"
-            LATEST="true"
 
           elif [[ "$EVENT" == "pull_request" ]] || [[ "$TYPE" == "version" ]] || [[ "$REF" =~ ^rc/ ]]; then
             # A. RC Branch
