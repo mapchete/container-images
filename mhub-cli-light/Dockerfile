@@ -15,7 +15,7 @@ RUN git clone https://github.com/mapchete/mapchete-hub-cli deps/mapchete-hub-cli
 
 
 RUN uv pip compile \
-    deps/mapmapchete-hub-clichete/pyproject.toml \
+    deps/mapchete-hub-cli/pyproject.toml \
     -o requirements.txt
 
 RUN uv init --name factory-build --lib . && \
