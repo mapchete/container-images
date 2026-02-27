@@ -24,13 +24,19 @@ RUN git clone https://github.com/mapchete/mapchete-eo deps/mapchete-eo && \
 RUN git clone https://github.com/mapchete/mapchete-hub deps/mapchete-hub && \
     cd deps/mapchete-hub && git checkout ${MAPCHETE_HUB_REF}
 
-RUN uv export --frozen --project deps/mapchete >> raw.txt && \
-    uv export --frozen --project deps/mapchete-eo >> raw.txt && \
-    uv export --frozen --project deps/mapchete-hub >> raw.txt && \
-    grep '==' raw.txt | \
-    grep -v "mapchete" | \
-    sed 's/[[:space:];\\].*//' | sort -V | \
-    awk -F'==' '{a[$1]=$2} END {for (i in a) print i"=="a[i]}' | sort > requirements.txt
+# RUN uv export --frozen --project deps/mapchete >> raw.txt && \
+#     uv export --frozen --project deps/mapchete-eo >> raw.txt && \
+#     uv export --frozen --project deps/mapchete-hub >> raw.txt && \
+#     grep '==' raw.txt | \
+#     grep -v "mapchete" | \
+#     sed 's/[[:space:];\\].*//' | sort -V | \
+#     awk -F'==' '{a[$1]=$2} END {for (i in a) print i"=="a[i]}' | sort > requirements.txt
+
+RUN uv pip compile \
+    deps/mapchete/pyproject.toml \
+    deps/mapchete-eo/pyproject.toml \
+    deps/mapchete-hub/pyproject.toml \
+    -o requirements.txt    
 
 RUN uv init --name factory-build --lib .
 
