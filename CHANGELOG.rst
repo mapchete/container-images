@@ -2,6 +2,15 @@
 Changelog
 #########
 
+2026.6.0 - 2026-06-18
+---------------------
+
+* Aligned **mapchete** to `2026.4.1`
+* Aligned **mapchete-eo** to `2026.3.0`
+* Aligned **mapchete-hub** to `2026.4.0`
+* Aligned **mapchete-hub-cli** to `2025.9.0`
+
+
 2026.4.1 - 2026-04-13
 ---------------------
 
