@@ -82,7 +82,7 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       
       - name: 📊 Consolidated Dashboard
         shell: bash
@@ -183,7 +183,7 @@ jobs:
 
       - name: 📬 Single Automated PR
         if: env.MODE == 'rc'
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.MAPCHETE_PAT || secrets.GITHUB_TOKEN }}
           commit-message: "rc: sync all image pins for ${{ env.TAG }}"

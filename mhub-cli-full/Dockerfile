@@ -1,4 +1,4 @@
-FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0 AS builder
+FROM ghcr.io/osgeo/gdal:ubuntu-small-3.13.3 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl ca-certificates build-essential python3-dev && rm -rf /var/lib/apt/lists/*
@@ -40,7 +40,7 @@ RUN sha256sum uv.lock > /app/combined_hash && \
     sha256sum /app/combined_hash | cut -d' ' -f1 > /app/uv_fingerprint
 
 
-FROM ghcr.io/osgeo/gdal:ubuntu-small-3.12.0
+FROM ghcr.io/osgeo/gdal:ubuntu-small-3.13.3
 
 ARG IMAGE_FINGERPRINT=unknown
 

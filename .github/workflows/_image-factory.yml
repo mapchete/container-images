@@ -56,7 +56,7 @@ jobs:
 
     steps:
       - name: ⬇️ Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with: { fetch-depth: 0 }
 
       - name: 🚦 Decision Check
@@ -272,7 +272,7 @@ jobs:
       hub_ref: ${{ steps.fingerprint.outputs.hub_ref || needs.prepare.outputs.mapchete-hub-ref }}
       cli_ref: ${{ steps.fingerprint.outputs.cli_ref || needs.prepare.outputs.mapchete-hub-cli-ref }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.prepare.outputs.use-branch }}
 
@@ -286,22 +286,22 @@ jobs:
             --build-arg MAPCHETE_HUB_CLI_REF=${{ needs.prepare.outputs.mapchete-hub-cli-ref }} \
             "${{ inputs.image-name }}/"
           
-          LOCAL_FP=$(docker run --rm --entrypoint cat candidate /app/uv_fingerprint)
+          LOCAL_FP=$(docker run --rm --entrypoint cat candidate /app/uv_fingerprint 2>/dev/null || echo "")
+          echo "fp=${LOCAL_FP:-unknown}" >> "$GITHUB_OUTPUT"
           
           REMOTE_IMAGE="ghcr.io/mapchete/${{ inputs.image-name }}:latest"
-          REMOTE_FP=$(skopeo inspect "docker://$REMOTE_IMAGE" 2>/dev/null | jq -r '.Labels["org.mapchete.image_fingerprint"] // "none"' | tr -d '\r\n ')
+          REMOTE_FP=$(skopeo inspect "docker://$REMOTE_IMAGE" 2>/dev/null | jq -r '.Labels["org.mapchete.image_fingerprint"] // "none"' 2>/dev/null | tr -d '\r\n ' || echo "none")
 
-          echo "fp=$LOCAL_FP" >> "$GITHUB_OUTPUT"
-          
-          if [[ "$LOCAL_FP" == "$REMOTE_FP" ]]; then
+          if [[ -n "$LOCAL_FP" && "$LOCAL_FP" == "$REMOTE_FP" ]]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             if [[ "${{ needs.prepare.outputs.mode }}" == "rc" ]]; then
-              docker pull "$REMOTE_IMAGE"
-              get_ver() { docker run --rm "$REMOTE_IMAGE" uv pip list | grep "^$1 " | awk '{print $2}' | tr -d '\r\n' || echo "N/A"; }
-              echo "m_ref=$(get_ver mapchete)" >> "$GITHUB_OUTPUT"
-              echo "eo_ref=$(get_ver mapchete-eo)" >> "$GITHUB_OUTPUT"
-              echo "hub_ref=$(get_ver mapchete-hub)" >> "$GITHUB_OUTPUT"
-              echo "cli_ref=$(get_ver mapchete-hub-cli)" >> "$GITHUB_OUTPUT"
+              if docker pull "$REMOTE_IMAGE" 2>/dev/null; then
+                get_ver() { docker run --rm "$REMOTE_IMAGE" uv pip list 2>/dev/null | grep "^$1 " | awk '{print $2}' | tr -d '\r\n' || echo "N/A"; }
+                echo "m_ref=$(get_ver mapchete)" >> "$GITHUB_OUTPUT"
+                echo "eo_ref=$(get_ver mapchete-eo)" >> "$GITHUB_OUTPUT"
+                echo "hub_ref=$(get_ver mapchete-hub)" >> "$GITHUB_OUTPUT"
+                echo "cli_ref=$(get_ver mapchete-hub-cli)" >> "$GITHUB_OUTPUT"
+              fi
             fi
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -339,7 +339,7 @@ jobs:
             candidate \
             /bin/bash -c "cd deps/mapchete-hub && uv pip install -e .[test] && uv run pytest"
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         if: steps.fingerprint.outputs.changed == 'true'
         with:
           registry: ghcr.io
@@ -348,7 +348,7 @@ jobs:
 
       - id: meta
         if: steps.fingerprint.outputs.changed == 'true' || needs.prepare.outputs.mode == 'rc'
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/mapchete/${{ inputs.image-name }}
           flavor: latest=false
@@ -361,7 +361,7 @@ jobs:
 
       - name: 🚀 Push Image
         if: steps.fingerprint.outputs.changed == 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: "${{ inputs.image-name }}/"
           push: true
@@ -442,7 +442,7 @@ jobs:
 
       - name: 📬 Automated RC PR
         if: needs.prepare.outputs.mode == 'rc' && inputs.enable-pr
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.MAPCHETE_PAT || secrets.GITHUB_TOKEN }}
           commit-message: "rc: sync release pins for ${{ needs.prepare.outputs.calculated-tag }}"
