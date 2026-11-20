@@ -319,7 +319,7 @@ jobs:
             candidate \
             /bin/bash -c "cd deps/mapchete-eo && uv pip install -e .[test] && uv run pytest"
 
-      - name: 🧪 Integration Test (full: mapchete, mapchete-eo, mapchete-hub)
+      - name: "🧪 Integration Test (full: mapchete, mapchete-eo, mapchete-hub)"
         if: inputs.image-name == 'mapchete' && steps.fingerprint.outputs.changed == 'true' && needs.prepare.outputs.mode == 'rc'
         run: |
           docker run --rm \
