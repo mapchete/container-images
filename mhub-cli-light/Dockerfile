@@ -14,12 +14,8 @@ RUN git clone https://github.com/mapchete/mapchete-hub-cli deps/mapchete-hub-cli
     cd deps/mapchete-hub-cli && git checkout ${MAPCHETE_HUB_CLI_REF}
 
 
-RUN uv pip compile \
-    deps/mapchete-hub-cli/pyproject.toml \
-    -o requirements.txt
-
 RUN uv init --name factory-build --lib . && \
-    uv add -c requirements.txt ./deps/mapchete-hub-cli
+    uv add ./deps/mapchete-hub-cli
 
 # Generate the fingerprint based on the resolved lockfile
 # Combine the lockfile hash AND a hash of the source code 

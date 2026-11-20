@@ -19,12 +19,8 @@ RUN git clone https://github.com/mapchete/mapchete-hub-cli deps/mapchete-hub-cli
 #     sed 's/[[:space:];\\].*//' | sort -V | \
 #     awk -F'==' '{a[$1]=$2} END {for (i in a) print i"=="a[i]}' | sort > requirements.txt
 
-RUN uv pip compile \
-    deps/mapchete-hub-cli/pyproject.toml \
-    -o requirements.txt    
-
 RUN uv init --name factory-build --lib . && \
-    uv add -c requirements.txt "./deps/mapchete-hub-cli[zones]"
+    uv add "./deps/mapchete-hub-cli[zones]"
 
 # Generate the fingerprint based on the resolved lockfile
 # Combine the lockfile hash AND a hash of the source code 
